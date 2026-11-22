@@ -8,7 +8,7 @@ import { useStore } from '../state/store'
 import { Backdrop, GameLogo } from './Art'
 import { GameCard } from './GameCard'
 import { GameRow } from './GameRow'
-import { Badge, Button, IconButton, cx } from './ui'
+import { Badge, Button, GlassButton, IconButton, cx } from './ui'
 
 const KEY_ROWS = ['ABCDEFGHIJ', 'KLMNOPQRST', 'UVWXYZ1234', '567890 -.']
 
@@ -156,9 +156,9 @@ function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
             {game.description || 'Ready to play.'}
           </p>
           <div className="mt-5 flex items-center gap-3">
-            <Button size="lg" variant="primary" icon={<Play className="h-5 w-5 fill-current" />} onClick={() => void play(game.id)}>
+            <GlassButton size="lg" tone="play" icon={<Play className="h-4.5 w-4.5 fill-current" />} onClick={() => void play(game.id)}>
               {isResume ? 'Resume' : 'Play'}
-            </Button>
+            </GlassButton>
             <Button size="lg" variant="secondary" onClick={() => openDetail(game.id)}>
               Details
             </Button>

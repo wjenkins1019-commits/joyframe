@@ -4,7 +4,7 @@ import type { Game } from '@shared/types'
 import { formatPlaytime, relativeTime } from '../lib/format'
 import { useStore } from '../state/store'
 import { Backdrop, GameLogo } from './Art'
-import { Badge, Button, cx } from './ui'
+import { Badge, Button, GlassButton, cx } from './ui'
 import { TrailerOverlay } from './VideoPlayer'
 
 export function Hero({ pool }: { pool: Game[] }): React.JSX.Element | null {
@@ -118,14 +118,14 @@ export function Hero({ pool }: { pool: Game[] }): React.JSX.Element | null {
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-2.5">
-            <Button
+            <GlassButton
               size="lg"
-              variant="primary"
-              icon={<Play className="h-5 w-5 fill-current" />}
+              tone="play"
+              icon={<Play className="h-4.5 w-4.5 fill-current" />}
               onClick={() => void play(game.id)}
             >
               {isResume ? 'Resume' : 'Play'}
-            </Button>
+            </GlassButton>
             <Button size="lg" variant="secondary" icon={<Info className="h-4 w-4" />} onClick={() => openDetail(game.id)}>
               More info
             </Button>
