@@ -27,7 +27,9 @@
  *
  * Exits 1 if the build is missing, the build fails or any reading fails to
  * track. Uses an isolated profile in .verify-pad/ or .verify-pad-dist/
- * (gitignored) so it never touches the real library.
+ * (gitignored) so it never touches the real library. The two screenshots it
+ * captures are run artifacts too, so they land in .verify-shots/ (gitignored)
+ * rather than dirtying the tracked tree under shots/.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -39,6 +41,13 @@ const PORT = Number(process.env.JF_DEBUG_PORT ?? (DIST ? 9227 : 9223))
 const PROFILE = DIST ? '.verify-pad-dist' : '.verify-pad'
 const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const SHOT_DIR = '.verify-shots'
+
+/** Captures are per-run artifacts, so keep them out of the tracked shots/ folder. */
+function saveShot(name, data) {
+  fs.mkdirSync(SHOT_DIR, { recursive: true })
+  fs.writeFileSync(path.join(SHOT_DIR, name), Buffer.from(data, 'base64'))
+}
 
 /** Windows keeps profile files locked until the app exits; a leftover profile is gitignored. */
 function removeProfile() {
@@ -443,7 +452,7 @@ async function main() {
 
   const screenshot = await call('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
   if (screenshot.result?.data) {
-    fs.writeFileSync(path.join('shots', 'verify-pad.jpg'), Buffer.from(screenshot.result.data, 'base64'))
+    saveShot('verify-pad.jpg', screenshot.result.data)
   }
 
   // ---- Last-action readout and input checklist ----------------------------
@@ -815,7 +824,7 @@ async function main() {
 
   const consoleShot = await call('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
   if (consoleShot.result?.data) {
-    fs.writeFileSync(path.join('shots', 'verify-pad-console.jpg'), Buffer.from(consoleShot.result.data, 'base64'))
+    saveShot('verify-pad-console.jpg', consoleShot.result.data)
   }
 
   // ---- Back precedence and global commands -------------------------------
