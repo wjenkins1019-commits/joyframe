@@ -17,6 +17,12 @@ npm install
 npm run dev      # Vite + Electron with hot reload
 ```
 
+Electron 45 no longer downloads its binary from a package install script, so installs that skip
+lifecycle scripts (`npm ci --ignore-scripts`, some CI images and npm 11 install-script policies)
+leave `node_modules/electron/dist` empty and `npm run verify:pad` fails on `electron.exe ENOENT`.
+This project's `postinstall` runs Electron's installer for you; if you skipped scripts, run
+`npx install-electron` once before `npm run dev`.
+
 Production build and run:
 
 ```bash
