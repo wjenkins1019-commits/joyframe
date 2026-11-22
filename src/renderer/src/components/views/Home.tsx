@@ -24,8 +24,8 @@ export function HomeView({ onScan, onAddGame }: { onScan: () => void; onAddGame:
             </h1>
             <p className="mt-4 text-sm leading-relaxed text-jf-muted">
               Import your Steam library, scan folders for installed PC games, or point JOYFRAME at your legally
-              owned ROM collection. Everything stays on this machine — artwork is cached locally so your library
-              keeps working offline.
+              owned ROM collection. Your library stays on this machine — artwork can stream on demand or be cached
+              for offline browsing, and one game never imports twice when it exists in several formats.
             </p>
             <div className="mt-7 flex flex-wrap gap-2.5">
               <Button

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Emulator, Game, ScanProgress, ScanResult } from '../../shared/types.ts'
 import type { Db } from './db.ts'
-import { detectPlatform } from './platforms.ts'
+import { detectPlatform, platformById } from './platforms.ts'
 import { findBySource, findDuplicate, insertGame, nowIso, rowToEmulator, uid } from './repo.ts'
 
 export type ProgressEmitter = (progress: ScanProgress) => void
@@ -84,7 +84,10 @@ async function walk(
 
 export function cleanTitle(raw: string): string {
   return raw
-    .replace(/\.(exe|iso|bin|cue|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso)$/i, '')
+    .replace(
+      /\.(exe|iso|bin|cue|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso|nsp|nsz|xci|wud|wux|rpx|gcz|wad|cci|pkg|dat)$/i,
+      ''
+    )
     .replace(/\[(.*?)\]/g, ' ')
     .replace(/\((USA|Europe|Japan|World|Rev [^)]*|v[0-9.]+|En|Fr|De|Es|It|Beta|Proto|Demo)[^)]*\)/gi, ' ')
     .replace(/[_.]+/g, ' ')
@@ -230,9 +233,54 @@ export async function scanPcFolders(
   return { kind: 'pc', added, updated, skipped, errors, elapsedMs: Date.now() - started }
 }
 
+/**
+ * When one folder holds the same game in several formats, keep the best one.
+ * Listed most-preferred first; anything unlisted falls back to the platform's
+ * own extension order, and archives sort last because they need unpacking.
+ */
+const ROM_PREFERENCE: Record<string, string[]> = {
+  switch: ['xci', 'nsp', 'nsz'],
+  gamecube: ['rvz', 'gcz', 'iso', 'gcm'],
+  wii: ['rvz', 'wbfs', 'iso'],
+  wiiu: ['wux', 'wud', 'rpx'],
+  ps1: ['m3u', 'cue', 'ccd', 'chd', 'pbp', 'bin'],
+  ps2: ['chd', 'iso'],
+  psp: ['cso', 'iso', 'pbp'],
+  dreamcast: ['gdi', 'cdi', 'dat'],
+  saturn: ['cue', 'chd'],
+  segacd: ['cue', 'chd'],
+  arcade: ['zip', '7z', 'chd']
+}
+
+const ARCHIVE_EXTENSIONS = new Set(['zip', '7z'])
+
+/** Lower is better; ties are broken by file size so a full dump beats a stub. */
+function variantRank(file: string, platformId: string): number {
+  const ext = path.extname(file).slice(1).toLowerCase()
+  const preferred = ROM_PREFERENCE[platformId] ?? platformById(platformId)?.extensions ?? []
+  const index = preferred.indexOf(ext)
+  if (index !== -1) return index
+  const archivePenalty = ARCHIVE_EXTENSIONS.has(ext) ? 50 : 0
+  return preferred.length + archivePenalty
+}
+
+/** Compare two files for the same game; negative means `left` is preferred. */
+function compareVariants(
+  left: { file: string; platformId: string; size: number },
+  right: { file: string; platformId: string; size: number }
+): number {
+  const rank = variantRank(left.file, left.platformId) - variantRank(right.file, right.platformId)
+  return rank !== 0 ? rank : right.size - left.size
+}
+
+/** Format-agnostic identity for dedupe: the cleaned title with punctuation removed. */
+function variantKey(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
 const ROM_EXTENSIONS = new Set([
   'nes', 'unf', 'fds', 'sfc', 'smc', 'fig', 'swc', 'n64', 'z64', 'v64', 'ndd',
-  'gcm', 'rvz', 'gcz', 'dol', 'wbfs', 'wad', 'wud', 'wux', 'rpx', 'nsp', 'xci',
+  'gcm', 'rvz', 'gcz', 'dol', 'wbfs', 'wad', 'wud', 'wux', 'rpx', 'nsp', 'nsz', 'xci',
   'gb', 'gbc', 'gba', 'agb', 'nds', 'dsi', '3ds', 'cci', 'cia',
   'iso', 'chd', 'cso', 'pbp', 'pkg', 'vpk', 'xiso', 'xex',
   'gdi', 'cdi', 'dat', 'md', 'gen', 'smd', '32x', 'sms', 'gg',
@@ -262,7 +310,7 @@ export async function scanRomFolders(
     }
     markLibraryPath(db, root, 'rom')
 
-    let pending: { file: string; platformId: string; title: string }[] = []
+    let pending: { file: string; platformId: string; title: string; size: number }[] = []
 
     await walk(
       root,
@@ -280,7 +328,7 @@ export async function scanRomFolders(
           skipped += 1
           return
         }
-        pending.push({ file: entry.file, platformId, title })
+        pending.push({ file: entry.file, platformId, title, size: entry.size })
         if (scanned % 30 === 0) {
           emit({
             phase: 'scanning',
@@ -303,6 +351,34 @@ export async function scanRomFolders(
     pending = pending.filter(
       (p) => !(p.file.toLowerCase().endsWith('.bin') && cueBases.has(p.file.slice(0, -4).toLowerCase()))
     )
+
+    // One entry per game per folder: a title present as .xci, .nsp and .nsz
+    // imports once, in the preferred format, instead of three times.
+    const bestVariants = new Map<string, { file: string; platformId: string; title: string; size: number }>()
+    let variantsSkipped = 0
+    for (const item of pending) {
+      const key = `${item.platformId}|${path.dirname(item.file).toLowerCase()}|${variantKey(item.title)}`
+      const current = bestVariants.get(key)
+      if (!current) {
+        bestVariants.set(key, item)
+        continue
+      }
+      if (compareVariants(item, current) < 0) {
+        bestVariants.set(key, item)
+      }
+      variantsSkipped += 1
+    }
+    pending = [...bestVariants.values()]
+    skipped += variantsSkipped
+    if (variantsSkipped > 0) {
+      emit({
+        phase: 'matching',
+        kind: 'rom',
+        scanned,
+        found: pending.length,
+        message: `Skipped ${variantsSkipped} duplicate format${variantsSkipped === 1 ? '' : 's'} — keeping one file per game`
+      })
+    }
 
     for (const item of pending) {
       if (shouldCancel?.()) break
@@ -345,7 +421,7 @@ export async function scanRomFolders(
     kind: 'rom',
     scanned,
     found: added,
-    message: `ROM scan complete — ${added} added, ${skipped} skipped`,
+    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats kept out)`,
     errors
   })
   return { kind: 'rom', added, updated, skipped, errors, elapsedMs: Date.now() - started }

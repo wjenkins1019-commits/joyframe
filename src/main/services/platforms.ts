@@ -14,7 +14,7 @@ export const PLATFORMS: Platform[] = [
   { id: 'gamecube', name: 'Nintendo GameCube', shortName: 'GameCube', family: 'Nintendo', extensions: ['gcm', 'rvz', 'gcz', 'dol'], native: false, emulatorHint: 'Dolphin', sortOrder: 13 },
   { id: 'wii', name: 'Nintendo Wii', shortName: 'Wii', family: 'Nintendo', extensions: ['wbfs', 'rvz', 'wad'], native: false, emulatorHint: 'Dolphin', sortOrder: 14 },
   { id: 'wiiu', name: 'Nintendo Wii U', shortName: 'Wii U', family: 'Nintendo', extensions: ['wud', 'wux', 'rpx'], native: false, emulatorHint: 'Cemu', sortOrder: 15 },
-  { id: 'switch', name: 'Nintendo Switch', shortName: 'Switch', family: 'Nintendo', extensions: ['nsp', 'xci'], native: false, emulatorHint: 'Ryujinx', sortOrder: 16 },
+  { id: 'switch', name: 'Nintendo Switch', shortName: 'Switch', family: 'Nintendo', extensions: ['nsp', 'nsz', 'xci'], native: false, emulatorHint: 'Ryujinx', sortOrder: 16 },
   { id: 'gb', name: 'Game Boy', shortName: 'GB', family: 'Nintendo', extensions: ['gb'], native: false, emulatorHint: 'mGBA / RetroArch', sortOrder: 17 },
   { id: 'gbc', name: 'Game Boy Color', shortName: 'GBC', family: 'Nintendo', extensions: ['gbc'], native: false, emulatorHint: 'mGBA / RetroArch', sortOrder: 18 },
   { id: 'gba', name: 'Game Boy Advance', shortName: 'GBA', family: 'Nintendo', extensions: ['gba', 'agb'], native: false, emulatorHint: 'mGBA / RetroArch', sortOrder: 19 },

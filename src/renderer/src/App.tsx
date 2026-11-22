@@ -13,6 +13,7 @@ import { EmulatorsView } from './components/views/Emulators'
 import { StatsView } from './components/views/Stats'
 import { SettingsView } from './components/views/Settings'
 import { ConsoleMode } from './components/ConsoleMode'
+import { ConsoleTransition } from './components/ConsoleTransition'
 import { GameDetail } from './components/GameDetail'
 import { GameEditor } from './components/GameEditor'
 import { ScanPanel } from './components/ScanPanel'
@@ -73,6 +74,7 @@ export default function App(): React.JSX.Element {
   const notify = useStore((state) => state.notify)
   const [addOpen, setAddOpen] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
+  const [consolePulse, setConsolePulse] = useState(false)
   const bootstrapped = useRef(false)
   const autoScanned = useRef(false)
 
@@ -107,6 +109,15 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     document.documentElement.style.setProperty('--color-jf-red', settings.themeAccent)
   }, [settings.themeAccent])
+
+  // Play the hand-off once per entry into Console Mode, and never for users
+  // who asked for reduced motion.
+  useEffect(() => {
+    if (!consoleMode || settings.reduceMotion) return
+    setConsolePulse(true)
+    const timer = window.setTimeout(() => setConsolePulse(false), 950)
+    return () => window.clearTimeout(timer)
+  }, [consoleMode, settings.reduceMotion])
 
   useEffect(() => {
     if (!ready) return
@@ -200,6 +211,7 @@ export default function App(): React.JSX.Element {
         </main>
       </div>
 
+      {consoleMode && consolePulse && <ConsoleTransition />}
       {consoleMode && <ConsoleMode />}
 
       <GameDetail />

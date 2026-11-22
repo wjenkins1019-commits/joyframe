@@ -65,6 +65,10 @@ write(path.join(romRoot, 'gba', 'Pokemon Emerald.gba'), 'rom', 2048)
 write(path.join(romRoot, 'ps2', 'Shadow of the Colossus.iso'), 'rom', 4096)
 write(path.join(romRoot, 'ps1', 'Final Fantasy VII (Disc 1).cue'), 'FILE "x.bin" BINARY', 256)
 write(path.join(romRoot, 'ps1', 'Final Fantasy VII (Disc 1).bin'), 'bin', 4096)
+// One game shipped in three Switch formats: only the preferred file may import.
+write(path.join(romRoot, 'switch', 'Metroid Dread.nsp'), 'nsp', 2048)
+write(path.join(romRoot, 'switch', 'Metroid Dread.nsz'), 'nsz', 3072)
+write(path.join(romRoot, 'switch', 'Metroid Dread.xci'), 'xci', 4096)
 write(path.join(romRoot, 'bios', 'scph1001.bin'), 'bios', 512)
 write(path.join(romRoot, 'snes', 'notes.txt'), 'not a rom')
 
@@ -110,12 +114,21 @@ await check('PC scan picks the executable matching the folder name', () => {
 await check('ROM scan detects platforms from extensions and folder hints', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const byPlatform = new Map(romGames.map((game) => [game.title, game.platformId]))
-  assert.equal(romGames.length, 5)
+  assert.equal(romGames.length, 6)
   assert.equal(byPlatform.get('Chrono Trigger'), 'snes')
   assert.equal(byPlatform.get('Super Mario Bros'), 'nes')
   assert.equal(byPlatform.get('Pokemon Emerald'), 'gba')
   assert.equal(byPlatform.get('Shadow of the Colossus'), 'ps2')
   assert.equal(byPlatform.get('Final Fantasy VII (Disc 1)'), 'ps1')
+  assert.equal(byPlatform.get('Metroid Dread'), 'switch')
+})
+
+await check('multi-format games import once, in the preferred format', () => {
+  const romGames = queryGames(db, { source: 'rom-scan' }, true)
+  const metroid = romGames.filter((game) => game.title === 'Metroid Dread')
+  assert.equal(metroid.length, 1)
+  assert.ok(metroid[0].romPath.toLowerCase().endsWith('.xci'))
+  assert.equal(romGames.filter((game) => /\.(nsp|nsz)$/i.test(game.romPath)).length, 0)
 })
 
 await check('CUE/BIN pairs are not imported twice and BIOS files are ignored', () => {

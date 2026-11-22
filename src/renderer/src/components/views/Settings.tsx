@@ -425,6 +425,12 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
                 <option value="igdb">IGDB (requires Twitch credentials)</option>
               </Select>
             </Field>
+            <Toggle
+              label="Store artwork on this PC"
+              description="Off keeps posters, backdrops and screenshots as remote URLs, so scraping art costs no disk space. Trailers always stream from the provider."
+              checked={draft.artworkStorage === 'cache'}
+              onChange={(value) => commit({ artworkStorage: value ? 'cache' : 'remote' })}
+            />
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="IGDB client ID">
                 <Input
@@ -447,9 +453,9 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <div className="rounded-lg border border-white/8 bg-black/25 p-3 text-[11px] leading-relaxed text-jf-muted">
               <p className="font-semibold text-white/75">Provider notes</p>
               <p className="mt-1">
-                Steam Store metadata and trailers work without a key for Steam titles. IGDB requires a free Twitch developer
-                application. ScreenScraper needs developer credentials issued by that project and is not enabled in this build —
-                you can always import your own artwork.
+                Steam Store metadata, trailers and screenshot art work without a key for Steam titles. IGDB requires a free
+                Twitch developer application and also supplies art for retro and non-Steam titles. ScreenScraper needs developer
+                credentials issued by that project and is not enabled in this build — you can always import your own artwork.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

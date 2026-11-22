@@ -42,9 +42,11 @@ export function BackdropLayer(): React.JSX.Element {
           <Backdrop game={layers.current} className="h-full w-full scale-105 object-cover" />
         </div>
       )}
-      <div className="absolute inset-0 bg-[radial-gradient(120%_90%_at_20%_10%,rgba(21,23,27,0.15)_0%,rgba(21,23,27,0.82)_58%,#15171b_100%)]" />
-      <div className="absolute inset-0 bg-gradient-to-r from-[#15171b] via-[#15171b]/72 to-transparent" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-[#15171b] to-transparent" />
+      {/* Smoked glass over the art: dark enough to read text, translucent enough
+          that the backdrop and the ambient stage light still show through. */}
+      <div className="absolute inset-0 bg-[radial-gradient(130%_100%_at_14%_0%,rgba(20,23,28,0.22)_0%,rgba(9,11,14,0.78)_56%,rgba(7,8,11,0.94)_100%)]" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[#0b0d10]/92 via-[#0b0d10]/58 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-[#0b0d10] via-[#0b0d10]/70 to-transparent" />
     </div>
   )
 }

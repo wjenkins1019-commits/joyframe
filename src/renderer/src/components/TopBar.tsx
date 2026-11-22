@@ -43,7 +43,7 @@ export function TopBar({
   return (
     <header
       className={cx(
-        'drag-region relative z-20 flex h-14 shrink-0 items-center gap-3 border-b border-white/6 bg-[#15171b]/70 px-5 backdrop-blur-xl',
+        'drag-region relative z-20 flex h-14 shrink-0 items-center gap-3 border-b border-white/6 bg-[#080a0d]/45 px-5 backdrop-blur-2xl backdrop-saturate-150',
         platform === 'win32' && 'pr-[150px]',
         hidden && 'hidden'
       )}

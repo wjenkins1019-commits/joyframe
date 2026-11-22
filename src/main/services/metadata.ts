@@ -15,9 +15,21 @@ export interface MetadataDeps {
   db: Db
   settings: AppSettings
   artworkDir: string
+  /** false keeps remote URLs so the library stores no cover files of its own. */
+  cacheArtwork: boolean
 }
 
 const STEAM_CDN = 'https://cdn.cloudflare.steamstatic.com/steam/apps'
+
+/**
+ * Resolve artwork according to the storage preference: either download it into
+ * the local cache (offline browsing) or keep the provider URL (nothing stored).
+ */
+async function artFor(deps: MetadataDeps, url: string, base: string): Promise<string> {
+  if (!url) return ''
+  if (!deps.cacheArtwork) return url
+  return cacheImage(deps.artworkDir, url, base)
+}
 
 export function providerStatuses(settings: AppSettings): ProviderStatus[] {
   return [
@@ -128,14 +140,14 @@ async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): 
   const art = steamArtworkUrls(appid)
   const base = `steam-${appid}`
   const [cover, background, logo] = await Promise.all([
-    cacheImage(deps.artworkDir, art.cover, `${base}-cover`),
-    cacheImage(deps.artworkDir, details.background_raw ?? art.background, `${base}-hero`),
-    cacheImage(deps.artworkDir, art.logo, `${base}-logo`)
+    artFor(deps, art.cover, `${base}-cover`),
+    artFor(deps, details.background_raw ?? art.background, `${base}-hero`),
+    artFor(deps, art.logo, `${base}-logo`)
   ])
 
   const screenshots: Screenshot[] = []
   for (const [index, shot] of (details.screenshots ?? []).slice(0, 6).entries()) {
-    const local = await cacheImage(deps.artworkDir, shot.path_full, `${base}-shot-${index}`)
+    const local = await artFor(deps, shot.path_full, `${base}-shot-${index}`)
     screenshots.push({ thumb: shot.path_thumbnail, full: shot.path_full, local: local || undefined })
   }
 
@@ -272,17 +284,17 @@ async function enrichFromIgdb(deps: MetadataDeps, game: Game): Promise<MetadataR
 
     const entry = best.entry
     const base = `igdb-${entry.id}`
-    const cover = entry.cover ? await cacheImage(deps.artworkDir, igdbImage(entry.cover.url, 'cover_big'), `${base}-cover`) : ''
+    const cover = entry.cover ? await artFor(deps, igdbImage(entry.cover.url, 'cover_big'), `${base}-cover`) : ''
     const backgroundSource =
       entry.artworks?.[0]?.url ?? entry.screenshots?.[0]?.url ?? entry.cover?.url ?? ''
     const background = backgroundSource
-      ? await cacheImage(deps.artworkDir, igdbImage(backgroundSource, '1080p'), `${base}-hero`)
+      ? await artFor(deps, igdbImage(backgroundSource, '1080p'), `${base}-hero`)
       : ''
 
     const screenshots: Screenshot[] = []
     for (const [index, shot] of (entry.screenshots ?? []).slice(0, 6).entries()) {
       const remote = igdbImage(shot.url, 'screenshot_huge')
-      const local = await cacheImage(deps.artworkDir, remote, `${base}-shot-${index}`)
+      const local = await artFor(deps, remote, `${base}-shot-${index}`)
       screenshots.push({ full: remote, local: local || undefined })
     }
 
@@ -400,6 +412,7 @@ export async function setArtwork(
   const base = `${game.id}-${kind}`
   let resolved = ''
   if (url.startsWith('jf-art://')) resolved = url
+  else if (!deps.cacheArtwork && /^https?:\/\//i.test(url)) resolved = url
   else resolved = await cacheImage(deps.artworkDir, url, base)
   if (!resolved) throw new Error('Could not download that artwork. Check the URL and your connection.')
 

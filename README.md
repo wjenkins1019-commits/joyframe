@@ -52,6 +52,10 @@ npm run smoke
   artwork and PNG/ICO exports (`resources/`, generated with `npm run icons`).
 - Red / white / charcoal dark theme (`#D71935`, `#A90F27`, `#15171B`, `#202329`, `#292D34`, `#A5A9B2`) with an accent
   colour setting applied through CSS custom properties.
+- Smoked-glass look: a lit, grainy backdrop stage under translucent panels, poster mounts with accent glow and a lit
+  rule on every row heading — editorial rather than flat dark-mode grey.
+- A full-screen Console Mode hand-off: glass wipe, expanding accent halo and a short focus-in on the console shell,
+  skipped automatically when Reduce motion is on.
 - Custom draggable window chrome with native Windows controls, sidebar navigation and global search.
 
 ### Dashboard
@@ -80,7 +84,8 @@ npm run smoke
 - Parses `libraryfolders.vdf` and every `appmanifest_*.acf` across library folders.
 - Detects installed vs uninstalled apps, reads local playtime and last-played from `userdata/<id>/config/localconfig.vdf`.
 - Imports CDN cover/hero/logo art, refreshes metadata from the public Steam Store API (descriptions, developers,
-  publishers, genres, release date, Metacritic score, screenshots, MP4/WebM trailers) and caches artwork locally.
+  publishers, genres, release date, Metacritic score, screenshots, MP4/WebM trailers) with artwork either streamed
+  from the CDN or cached locally, depending on the artwork storage setting.
 - Launches with `steam://rungameid/<appid>`; Steam keeps handling authentication, DRM and updates.
 
 ### Emulation
@@ -90,6 +95,9 @@ npm run smoke
 - RetroArch core mapping per platform, `{rom}` / `{core}` / `{game}` / `{dir}` / `{stateSlot}` placeholders.
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
   BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
+- One file per game: when a title exists in several formats in the same folder only the preferred one imports —
+  Switch keeps `.xci` → `.nsp` → `.nsz`, PS2 keeps `.chd` → `.iso`, disc sets keep `.m3u`/`.cue` over `.bin`,
+  archives sort last. The scan reports how many duplicate formats it skipped.
 - Configuration validation checks the executable, core file and placeholders without launching a game.
 - Per-game emulator, core, arguments, controller profile, resolution, display mode and save-state preferences.
 
@@ -119,8 +127,9 @@ npm run smoke
 - SQLite (Node's built-in `node:sqlite`, no native compilation) with WAL and a migration-safe schema.
 - Automatic consistent startup backups through SQLite's backup API, manual backups and restore with a pre-restore
   safety copy + relaunch.
-- Artwork cached on disk and served through the `jf-art://` protocol so browsing works offline.
-- All startup data loaded from SQLite; internet is only required for fresh metadata, trailers and artwork downloads.
+- Artwork is streamed from the provider by default (nothing stored) or cached on disk and served through the
+  `jf-art://` protocol for offline browsing — switchable in Settings → Metadata & artwork.
+- All startup data loaded from SQLite; internet is only required for fresh metadata, trailers and remote artwork.
 - `contextIsolation`, sandboxed renderer, no Node in the renderer, a strict CSP and a narrow preload bridge.
 - Launch validation: only http(s)/Steam/mail protocols are opened; missing executables and cores are reported instead of
   being executed.

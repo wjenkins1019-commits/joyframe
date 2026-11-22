@@ -106,7 +106,15 @@ export function broadcast(window: BrowserWindow | null, channel: string, payload
 export function createHandlers(ctx: AppContext) {
   const emitProgress = (progress: ScanProgress): void => broadcast(ctx.window, 'scan:progress', progress)
 
-  const metadataDeps = () => ({ db: ctx.db, settings: getSettings(ctx.db), artworkDir: ctx.info.artworkDir })
+  const metadataDeps = () => {
+    const settings = getSettings(ctx.db)
+    return {
+      db: ctx.db,
+      settings,
+      artworkDir: ctx.info.artworkDir,
+      cacheArtwork: settings.artworkStorage === 'cache'
+    }
+  }
 
   const handlers: Record<string, (...args: never[]) => unknown> = {
     'app:init': () => {

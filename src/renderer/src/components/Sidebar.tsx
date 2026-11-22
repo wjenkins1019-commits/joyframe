@@ -36,7 +36,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }): React.JSX.Ele
   return (
     <nav
       className={cx(
-        'relative z-30 flex h-full w-[84px] shrink-0 flex-col items-center border-r border-white/6 bg-[#111317]/92 py-3 backdrop-blur-xl',
+        'relative z-30 flex h-full w-[84px] shrink-0 flex-col items-center border-r border-white/6 bg-[#080a0d]/55 py-3 backdrop-blur-2xl backdrop-saturate-150',
         hidden && 'hidden'
       )}
     >

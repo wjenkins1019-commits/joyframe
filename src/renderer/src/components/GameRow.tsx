@@ -36,7 +36,7 @@ export function GameRow({
       aria-label={title}
     >
       <div className="mb-2.5 flex items-baseline justify-between gap-4 px-1">
-        <h2 className="text-[15px] font-bold tracking-wide text-white/95">{title}</h2>
+        <h2 className="jf-row-title text-[15px] font-bold tracking-wide text-white/95">{title}</h2>
         {onSeeAll && (
           <button
             data-nav="1"

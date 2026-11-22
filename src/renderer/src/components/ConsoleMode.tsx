@@ -212,7 +212,7 @@ export function ConsoleMode(): React.JSX.Element {
     <div
       ref={focusRef}
       data-jf-console="1"
-      className="fixed inset-0 z-40 flex flex-col overflow-y-auto bg-[#0f1114] animate-fade"
+      className="jf-console-enter fixed inset-0 z-40 flex flex-col overflow-y-auto bg-[#0a0c10]"
     >
       <div className="pointer-events-none fixed inset-0 opacity-30">
         {hero && <Backdrop game={hero} className="h-full w-full scale-110 object-cover blur-2xl" />}

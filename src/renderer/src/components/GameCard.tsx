@@ -72,7 +72,7 @@ export function GameCard({
     >
       <div
         className={cx(
-          'relative overflow-hidden rounded-xl border bg-jf-card transition-all duration-300 ease-out',
+          'jf-poster relative overflow-hidden rounded-xl border bg-jf-card transition-all duration-300 ease-out',
           hovered
             ? 'border-white/25 shadow-[0_26px_50px_-22px_rgba(0,0,0,0.95)] -translate-y-1'
             : 'border-white/8 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.9)]',

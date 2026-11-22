@@ -196,6 +196,8 @@ export interface AppSettings {
   showHidden: boolean
   steamPath: string
   metadataProvider: string
+  /** 'remote' streams artwork URLs; 'cache' downloads covers into the artwork folder. */
+  artworkStorage: 'remote' | 'cache'
   igdbClientId: string
   igdbClientSecret: string
   autoScanOnStartup: boolean
@@ -217,6 +219,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showHidden: false,
   steamPath: '',
   metadataProvider: 'steam',
+  artworkStorage: 'remote',
   igdbClientId: '',
   igdbClientSecret: '',
   autoScanOnStartup: false,
