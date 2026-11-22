@@ -23,7 +23,6 @@ import type {
 import { api } from '../lib/api'
 import { formatDate, formatPlaytime, relativeTime } from '../lib/format'
 import { Badge, Button, ConfirmInline, Field, Input, Select, Textarea } from './ui'
-import { InlineVideo } from './VideoPlayer'
 
 export interface ProfileState {
   emulatorId: string
@@ -205,12 +204,16 @@ export function DetailCards(props: DetailCardsProps): React.JSX.Element {
 
         {game.videoUrl && (
           <Card title="Trailer & gameplay">
-            <InlineVideo url={game.videoUrl} title={game.title} />
-            <div className="mt-2 flex items-center justify-between text-[11px] text-white/35">
-              <span>{game.videoName || 'Preview video'}</span>
-              <button data-nav="1" className="font-semibold text-jf-redtext hover:text-white" onClick={() => setTrailer(game.videoUrl)}>
-                Open full screen
-              </button>
+            {/* The page header already streams this trailer as a muted preview.
+                A second <video> on the same HLS manifest stalls both. */}
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-black/30 px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-white">{game.videoName || 'Preview video'}</p>
+                <p className="mt-0.5 text-[11px] text-white/40">Previewing above while you browse this page.</p>
+              </div>
+              <Button data-nav="1" size="sm" variant="secondary" onClick={() => setTrailer(game.videoUrl)}>
+                Play trailer
+              </Button>
             </div>
           </Card>
         )}

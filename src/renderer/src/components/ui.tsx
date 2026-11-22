@@ -59,6 +59,32 @@ export function Button({
   )
 }
 
+export function GlassButton({
+  tone = 'default',
+  size = 'md',
+  icon,
+  className,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  tone?: 'default' | 'play' | 'stop'
+  size?: 'sm' | 'md' | 'lg'
+  icon?: ReactNode
+}): React.JSX.Element {
+  const sizing = size === 'lg' ? 'h-12 px-7 text-[15px] gap-2.5' : size === 'sm' ? 'h-9 px-4 text-xs gap-1.5' : 'h-10 px-5 text-sm gap-2'
+  return (
+    <button
+      data-nav="1"
+      data-tone={tone}
+      className={cx('jf-glass-btn inline-flex items-center justify-center font-semibold', sizing, className)}
+      {...rest}
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}
+
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string
   size?: 'sm' | 'md'
@@ -157,7 +183,7 @@ export function Toggle({
   disabled?: boolean
 }): React.JSX.Element {
   return (
-    <div className="flex items-start justify-between gap-6 py-3">
+    <div className="flex items-center justify-between gap-6 py-3">
       <div className="min-w-0">
         <p className="text-sm font-medium text-white">{label}</p>
         {description && <p className="mt-0.5 text-xs leading-relaxed text-jf-muted">{description}</p>}
@@ -169,17 +195,10 @@ export function Toggle({
         aria-label={label}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={cx(
-          'relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-40',
-          checked ? 'border-jf-red bg-jf-red' : 'border-white/15 bg-white/10'
-        )}
+        data-checked={checked}
+        className="jf-switch"
       >
-        <span
-          className={cx(
-            'absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow transition-transform',
-            checked ? 'translate-x-[22px]' : 'translate-x-0.5'
-          )}
-        />
+        <span className="jf-switch-knob" />
       </button>
     </div>
   )

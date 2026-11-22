@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { EyeOff, FolderOpen, Heart, Image as ImageIcon, Layers, Pencil, Play, RefreshCw, X } from 'lucide-react'
+import { EyeOff, FolderOpen, Heart, Image as ImageIcon, Layers, Pencil, Play, RefreshCw, Square, X } from 'lucide-react'
 import type { ArtworkCandidate, GameSave } from '@shared/types'
 import type { MethodForm, ProfileState } from './GameDetailCards'
 import { api, errorMessage } from '../lib/api'
@@ -10,8 +10,8 @@ import { Backdrop, Cover, GameLogo } from './Art'
 import { GameEditor } from './GameEditor'
 import { DetailCards } from './GameDetailCards'
 import { DetailModals } from './GameDetailModals'
-import { TrailerOverlay } from './VideoPlayer'
-import { Badge, Button, IconButton, Spinner, cx } from './ui'
+import { StreamVideo, TrailerOverlay } from './VideoPlayer'
+import { Badge, Button, GlassButton, IconButton, Spinner, cx } from './ui'
 
 export function GameDetail(): React.JSX.Element | null {
   const detailId = useStore((state) => state.detailId)
@@ -24,6 +24,7 @@ export function GameDetail(): React.JSX.Element | null {
   const lastPlayed = useStore((state) => state.lastPlayed)
   const closeDetail = useStore((state) => state.closeDetail)
   const play = useStore((state) => state.play)
+  const stopGame = useStore((state) => state.stopGame)
   const toggleFavorite = useStore((state) => state.toggleFavorite)
   const addPlaytime = useStore((state) => state.addPlaytime)
   const setCompletion = useStore((state) => state.setCompletion)
@@ -250,15 +251,26 @@ export function GameDetail(): React.JSX.Element | null {
     <div
       ref={detailRef}
       data-jf-detail="1"
-      className="fixed inset-0 z-[60] overflow-y-auto bg-[#141619]/95 backdrop-blur-xl animate-fade"
+      className="jf-detail-enter fixed inset-0 z-[60] overflow-y-auto bg-[#141619]/95 backdrop-blur-xl"
     >
       <div className="relative">
         <div className="absolute inset-x-0 top-0 h-[520px] overflow-hidden">
           <Backdrop game={game} className="h-full w-full object-cover opacity-80" />
+          {game.videoUrl && !settings.reduceMotion && (
+            <StreamVideo
+              key={game.id}
+              url={game.videoUrl}
+              className="absolute inset-0 h-full w-full object-cover opacity-80"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          )}
           <div className="absolute inset-0 jf-grad-detail" />
         </div>
 
-        <div className="relative z-10">
+        <div className="jf-detail-body relative z-10">
           <div className="flex items-center justify-between px-8 pt-6">
             <button
               data-nav="1"
@@ -308,16 +320,25 @@ export function GameDetail(): React.JSX.Element | null {
                   {stars !== null && <span className="text-amber-300">★ {stars}</span>}
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center gap-2">
-                  <Button
+                <div className="mt-5 flex flex-wrap items-center gap-2.5">
+                  <GlassButton
+                    tone="play"
                     size="lg"
-                    variant="primary"
-                    icon={<Play className="h-5 w-5 fill-current" />}
+                    icon={<Play className="h-4.5 w-4.5 fill-current" />}
                     onClick={() => void play(game.id)}
                     disabled={running}
                   >
-                    {running ? 'Running' : isResume ? 'Resume' : 'Play'}
-                  </Button>
+                    {isResume ? 'Resume' : 'Play'}
+                  </GlassButton>
+                  <GlassButton
+                    tone="stop"
+                    size="lg"
+                    icon={<Square className="h-3.5 w-3.5 fill-current" />}
+                    onClick={() => void stopGame()}
+                    disabled={!running}
+                  >
+                    Stop
+                  </GlassButton>
                   <Button
                     size="lg"
                     variant={game.favorite ? 'secondary' : 'outline'}

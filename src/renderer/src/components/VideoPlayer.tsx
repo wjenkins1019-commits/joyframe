@@ -5,7 +5,7 @@ import { useState } from 'react'
 import Hls from 'hls.js'
 import { IconButton } from './ui'
 
-const isHlsUrl = (url: string): boolean => /\.m3u8(\?|$)/i.test(url)
+const isHlsUrl = (url: string): boolean => url.includes(".m3u8")
 
 /**
  * A <video> that also plays HLS. Steam's store API now hands out .m3u8 trailer
