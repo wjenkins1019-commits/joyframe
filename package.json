@@ -1,0 +1,78 @@
+{
+  "name": "joyframe",
+  "version": "1.0.0",
+  "description": "JOYFRAME - Every Game. One Universe.",
+  "main": "./out/main/index.js",
+  "author": "JOYFRAME",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "smoke": "node scripts/smoke.ts",
+    "icons": "node scripts/gen-icons.mjs",
+    "dist": "electron-vite build && electron-builder --win nsis",
+    "verify:pad": "node scripts/verify-pad.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "verify:dist-pad": "node scripts/verify-pad.mjs --dist",
+    "verify:first-run": "node scripts/verify-first-run.mjs",
+    "verify:freshness": "node scripts/check-packaged-fresh.mjs",
+    "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad"
+  },
+  "build": {
+    "appId": "com.joyframe.launcher",
+    "productName": "JOYFRAME",
+    "directories": {
+      "output": "release",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "JOYFRAME"
+    },
+    "mac": {
+      "icon": "resources/icon-512.png",
+      "category": "public.app-category.games"
+    },
+    "linux": {
+      "icon": "resources/icon-512.png",
+      "category": "Game"
+    }
+  },
+  "dependencies": {
+    "lucide-react": "^1.77.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "png-to-ico": "^3.0.2",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}
