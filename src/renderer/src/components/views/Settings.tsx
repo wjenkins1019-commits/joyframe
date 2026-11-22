@@ -20,6 +20,7 @@ import {
   Tv
 } from 'lucide-react'
 import type { AppSettings, BackupInfo, DemoStatus, HomeSection } from '@shared/types'
+import { defaultRomOrder } from '@shared/rom-formats'
 import { api, errorMessage } from '../../lib/api'
 import { useStore } from '../../state/store'
 import {
@@ -47,6 +48,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
   const notify = useStore((state) => state.notify)
   const setConsoleMode = useStore((state) => state.setConsoleMode)
   const sections = useStore((state) => state.sections)
+  const platforms = useStore((state) => state.platforms)
   const collections = useStore((state) => state.collections)
   const refreshSections = useStore((state) => state.refreshSections)
   const refresh = useStore((state) => state.refresh)
@@ -147,6 +149,28 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
     } finally {
       setBusy(null)
     }
+  }
+
+  const romOrderPlatforms = platforms
+    .filter((platform) => !platform.native && platform.extensions.length > 1)
+    .map((platform) => ({
+      platform,
+      order: settings.romFormatPreferences[platform.id] ?? defaultRomOrder(platform.id, platform.extensions),
+      overridden: Boolean(settings.romFormatPreferences[platform.id])
+    }))
+
+  const moveFormat = (platformId: string, order: string[], index: number, direction: -1 | 1): void => {
+    const target = index + direction
+    if (target < 0 || target >= order.length) return
+    const next = [...order]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    void updateSettings({ romFormatPreferences: { ...settings.romFormatPreferences, [platformId]: next } })
+  }
+
+  const resetFormat = (platformId: string): void => {
+    const next = { ...settings.romFormatPreferences }
+    delete next[platformId]
+    void updateSettings({ romFormatPreferences: next })
   }
 
   const reorderSection = async (index: number, direction: -1 | 1): Promise<void> => {
@@ -560,6 +584,63 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               Scan saves
             </Button>
           </div>
+          <div className="mt-4 rounded-lg border border-white/8 bg-black/25 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-jf-muted">ROM format preference</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-jf-muted">
+              When one folder holds the same game in several formats, a scan imports only the first format available in
+              this order. Changes apply to the next scan; platforms you never touch keep their built-in order.
+            </p>
+            <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto pr-1">
+              {romOrderPlatforms.map(({ platform, order, overridden }) => (
+                <div
+                  key={platform.id}
+                  className="flex items-center gap-2 rounded-lg border border-white/8 bg-white/3 px-2 py-1.5"
+                >
+                  <span className="w-24 shrink-0 truncate text-[11px] font-semibold text-white/80" title={platform.name}>
+                    {platform.shortName}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                    {order.map((ext, index) => (
+                      <span
+                        key={ext}
+                        className="inline-flex items-center gap-0.5 rounded border border-white/10 bg-black/40 px-1.5 py-0.5 font-mono text-[10px] text-white/75"
+                      >
+                        <button
+                          data-nav="1"
+                          aria-label={`Move ${ext} earlier for ${platform.name}`}
+                          disabled={index === 0}
+                          onClick={() => moveFormat(platform.id, order, index, -1)}
+                          className="px-0.5 text-white/35 hover:text-white disabled:opacity-20"
+                        >
+                          ‹
+                        </button>
+                        {ext}
+                        <button
+                          data-nav="1"
+                          aria-label={`Move ${ext} later for ${platform.name}`}
+                          disabled={index === order.length - 1}
+                          onClick={() => moveFormat(platform.id, order, index, 1)}
+                          className="px-0.5 text-white/35 hover:text-white disabled:opacity-20"
+                        >
+                          ›
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {overridden && (
+                    <button
+                      data-nav="1"
+                      onClick={() => resetFormat(platform.id)}
+                      className="text-[10px] font-semibold uppercase tracking-wide text-white/35 hover:text-white"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <Field label="Backups to keep">
               <Input

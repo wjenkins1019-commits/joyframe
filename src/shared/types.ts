@@ -196,6 +196,8 @@ export interface AppSettings {
   showHidden: boolean
   steamPath: string
   metadataProvider: string
+  /** Per-platform ROM format order; an absent key uses the built-in default. */
+  romFormatPreferences: Record<string, string[]>
   /** 'remote' streams artwork URLs; 'cache' downloads covers into the artwork folder. */
   artworkStorage: 'remote' | 'cache'
   igdbClientId: string
@@ -219,6 +221,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showHidden: false,
   steamPath: '',
   metadataProvider: 'steam',
+  romFormatPreferences: {},
   artworkStorage: 'remote',
   igdbClientId: '',
   igdbClientSecret: '',

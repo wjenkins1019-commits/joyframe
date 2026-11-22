@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Emulator, Game, ScanProgress, ScanResult } from '../../shared/types.ts'
 import type { Db } from './db.ts'
+import { defaultRomOrder } from '../../shared/rom-formats.ts'
 import { detectPlatform, platformById } from './platforms.ts'
 import { findBySource, findDuplicate, insertGame, nowIso, rowToEmulator, uid } from './repo.ts'
 
@@ -233,31 +234,22 @@ export async function scanPcFolders(
   return { kind: 'pc', added, updated, skipped, errors, elapsedMs: Date.now() - started }
 }
 
-/**
- * When one folder holds the same game in several formats, keep the best one.
- * Listed most-preferred first; anything unlisted falls back to the platform's
- * own extension order, and archives sort last because they need unpacking.
- */
-const ROM_PREFERENCE: Record<string, string[]> = {
-  switch: ['xci', 'nsp', 'nsz'],
-  gamecube: ['rvz', 'gcz', 'iso', 'gcm'],
-  wii: ['rvz', 'wbfs', 'iso'],
-  wiiu: ['wux', 'wud', 'rpx'],
-  ps1: ['m3u', 'cue', 'ccd', 'chd', 'pbp', 'bin'],
-  ps2: ['chd', 'iso'],
-  psp: ['cso', 'iso', 'pbp'],
-  dreamcast: ['gdi', 'cdi', 'dat'],
-  saturn: ['cue', 'chd'],
-  segacd: ['cue', 'chd'],
-  arcade: ['zip', '7z', 'chd']
-}
-
 const ARCHIVE_EXTENSIONS = new Set(['zip', '7z'])
 
+/** A user override wins; otherwise the platform's built-in order applies. */
+export function effectiveRomOrder(
+  platformId: string,
+  preferences: Record<string, string[]> = {}
+): string[] {
+  const override = preferences[platformId]
+  if (override?.length) return override
+  return defaultRomOrder(platformId, platformById(platformId)?.extensions ?? [])
+}
+
 /** Lower is better; ties are broken by file size so a full dump beats a stub. */
-function variantRank(file: string, platformId: string): number {
+function variantRank(file: string, platformId: string, preferences: Record<string, string[]>): number {
   const ext = path.extname(file).slice(1).toLowerCase()
-  const preferred = ROM_PREFERENCE[platformId] ?? platformById(platformId)?.extensions ?? []
+  const preferred = effectiveRomOrder(platformId, preferences)
   const index = preferred.indexOf(ext)
   if (index !== -1) return index
   const archivePenalty = ARCHIVE_EXTENSIONS.has(ext) ? 50 : 0
@@ -267,9 +259,11 @@ function variantRank(file: string, platformId: string): number {
 /** Compare two files for the same game; negative means `left` is preferred. */
 function compareVariants(
   left: { file: string; platformId: string; size: number },
-  right: { file: string; platformId: string; size: number }
+  right: { file: string; platformId: string; size: number },
+  preferences: Record<string, string[]>
 ): number {
-  const rank = variantRank(left.file, left.platformId) - variantRank(right.file, right.platformId)
+  const rank =
+    variantRank(left.file, left.platformId, preferences) - variantRank(right.file, right.platformId, preferences)
   return rank !== 0 ? rank : right.size - left.size
 }
 
@@ -292,7 +286,8 @@ export async function scanRomFolders(
   db: Db,
   paths: string[],
   emit: ProgressEmitter,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  preferences: Record<string, string[]> = {}
 ): Promise<ScanResult> {
   const started = Date.now()
   const errors: string[] = []
@@ -363,7 +358,7 @@ export async function scanRomFolders(
         bestVariants.set(key, item)
         continue
       }
-      if (compareVariants(item, current) < 0) {
+      if (compareVariants(item, current, preferences) < 0) {
         bestVariants.set(key, item)
       }
       variantsSkipped += 1

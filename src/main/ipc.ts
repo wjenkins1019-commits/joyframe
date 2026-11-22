@@ -227,7 +227,10 @@ export function createHandlers(ctx: AppContext) {
     },
 
     'scan:pc': async (paths: string[]): Promise<ScanResult> => scanPcFolders(ctx.db, paths, emitProgress),
-    'scan:rom': async (paths: string[]): Promise<ScanResult> => scanRomFolders(ctx.db, paths, emitProgress),
+    'scan:rom': async (paths: string[]): Promise<ScanResult> => {
+      const settings = getSettings(ctx.db)
+      return scanRomFolders(ctx.db, paths, emitProgress, undefined, settings.romFormatPreferences)
+    },
 
     'steam:detect': async (): Promise<SteamDetection> => {
       const settings = getSettings(ctx.db)

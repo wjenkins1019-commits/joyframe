@@ -123,6 +123,19 @@ await check('ROM scan detects platforms from extensions and folder hints', () =>
   assert.equal(byPlatform.get('Metroid Dread'), 'switch')
 })
 
+const prefRoot = path.join(root, 'roms-format-pref')
+write(path.join(prefRoot, 'switch', 'Splatoon 3.xci'), 'xci', 2048)
+write(path.join(prefRoot, 'switch', 'Splatoon 3.nsp'), 'nsp', 2048)
+write(path.join(prefRoot, 'switch', 'Splatoon 3.nsz'), 'nsz', 3072)
+const prefDb = openDatabase(path.join(root, 'format-pref.db'))
+await scanRomFolders(prefDb, [prefRoot], emit, undefined, { switch: ['nsz', 'xci', 'nsp'] })
+await check('per-platform format preference replaces the default order', () => {
+  const games = queryGames(prefDb, { source: 'rom-scan' }, true)
+  assert.equal(games.length, 1)
+  assert.ok(games[0].romPath.toLowerCase().endsWith('.nsz'))
+})
+prefDb.close()
+
 await check('multi-format games import once, in the preferred format', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const metroid = romGames.filter((game) => game.title === 'Metroid Dread')

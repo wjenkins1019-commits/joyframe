@@ -95,9 +95,10 @@ npm run smoke
 - RetroArch core mapping per platform, `{rom}` / `{core}` / `{game}` / `{dir}` / `{stateSlot}` placeholders.
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
   BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
-- One file per game: when a title exists in several formats in the same folder only the preferred one imports —
-  Switch keeps `.xci` → `.nsp` → `.nsz`, PS2 keeps `.chd` → `.iso`, disc sets keep `.m3u`/`.cue` over `.bin`,
-  archives sort last. The scan reports how many duplicate formats it skipped.
+- One file per game: when a title exists in several formats in the same folder only the preferred one imports.
+  Each platform's order is editable in Settings → Library & scanning → ROM format preference (defaults: Switch
+  `.xci` → `.nsp` → `.nsz`, PS2 `.chd` → `.iso`, disc sets keep `.m3u`/`.cue` over `.bin`, archives sort last).
+  The scan reports how many duplicate formats it skipped.
 - Configuration validation checks the executable, core file and placeholders without launching a game.
 - Per-game emulator, core, arguments, controller profile, resolution, display mode and save-state preferences.
 
