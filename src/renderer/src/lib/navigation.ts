@@ -374,6 +374,8 @@ export function useSpatialNavigation(): void {
     const repeatAt = new Map<string, number>()
     const stickEngaged = new Map<string, boolean>()
     const lastActive = new Map<number, number>()
+    /** Pads whose current state has already been taken as the starting point. */
+    const primedPads = new Set<number>()
     let pollTimer = 0
 
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -437,6 +439,43 @@ export function useSpatialNavigation(): void {
       // phantom slot — Steam/virtual pads reporting all zeros — can never
       // steal input from the physical controller. Falls back to the first
       // connected pad until any input arrives.
+      // A pad can appear with buttons already down: Steam's virtual pad, a
+      // controller resting on Start, or a stale report after a reconnect. That
+      // is not a press. Record whatever is already held the first time each pad
+      // is seen, so discovering a pad can never activate anything — without
+      // this, holding Start at launch silently entered Console Mode. New pads
+      // are primed here rather than on pin, so their first real press still
+      // registers once they take over navigation.
+      for (const entry of connected) {
+        if (primedPads.has(entry.index)) continue
+        primedPads.add(entry.index)
+        const down = (index: number): boolean => Boolean(entry.buttons[index]?.pressed)
+        for (const [key, index] of [
+          ['up', 12],
+          ['down', 13],
+          ['left', 14],
+          ['right', 15],
+          ['a', 0],
+          ['b', 1],
+          ['y', 3],
+          ['lb', 4],
+          ['rb', 5],
+          ['start', 9]
+        ] as const) {
+          if (down(index)) pressed.set(key, true)
+        }
+        const seedAxis = (key: string, value: number): void => {
+          if (value >= STICK_ENGAGE) {
+            pressed.set(key, true)
+            stickEngaged.set(key, true)
+            repeatAt.set(key, performance.now() + REPEAT_DELAY)
+          }
+        }
+        seedAxis('up', -(entry.axes[1] ?? 0))
+        seedAxis('down', entry.axes[1] ?? 0)
+        seedAxis('left', -(entry.axes[0] ?? 0))
+        seedAxis('right', entry.axes[0] ?? 0)
+      }
       const nowActive = performance.now()
       for (const entry of connected) {
         const live =
@@ -467,6 +506,7 @@ export function useSpatialNavigation(): void {
         pressed.clear()
         repeatAt.clear()
         stickEngaged.clear()
+        primedPads.clear()
         seenInputs.clear()
         lastAction = null
         diagSnapshot = {

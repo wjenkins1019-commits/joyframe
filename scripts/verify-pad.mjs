@@ -229,6 +229,28 @@ const FAKE_PAD = `(() => {
 })()`
 
 /**
+ * A pad that reports Start held on its very first poll. Steam's virtual pad and
+ * some controllers do this at launch; it must not count as a press.
+ */
+const LATCHED_START_PAD = `(() => {
+  const pad = {
+    index: 0,
+    id: 'Xbox Wireless Controller (virtual)',
+    connected: true,
+    mapping: 'standard',
+    timestamp: performance.now(),
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, (_, i) => ({
+      pressed: i === 9,
+      value: i === 9 ? 1 : 0,
+      touched: i === 9
+    }))
+  }
+  navigator.getGamepads = () => [pad, null, null, null]
+  return true
+})()`
+
+/**
  * An idle phantom pad at index 0 plus the active pad at index 1, so pinning can
  * be driven from either pad and the active pad can be unplugged mid-hold.
  */
@@ -378,6 +400,27 @@ async function main() {
     return false
   }
 
+  const results = []
+  const check = (name, ok, detail) => results.push({ name, ok, detail })
+
+  // ---- Latched input at startup -------------------------------------------
+  // A pad may report held buttons on its first poll. Seeding the edge trackers
+  // means the first poll can never act; without it a held Start opened Console
+  // Mode on launch even with consoleModeOnStartup off.
+  await call('Page.enable')
+  const injected = await call('Page.addScriptToEvaluateOnNewDocument', { source: LATCHED_START_PAD })
+  const injectedId = injected.result?.identifier
+  const readyExpression = `Boolean(document.querySelector('button[aria-label="Settings"]'))`
+  await call('Page.reload')
+  await waitFor(readyExpression, 25000)
+  await delay(1200)
+  const latchedConsole = await evaluate(`Boolean(document.querySelector('[data-jf-console="1"]'))`)
+  check('latched Start on the first pad poll stays on the desktop', !latchedConsole, `console=${latchedConsole}`)
+  if (injectedId) await call('Page.removeScriptToEvaluateOnNewDocument', { identifier: injectedId })
+  await call('Page.reload')
+  await waitFor(readyExpression, 25000)
+  await delay(800)
+
   await evaluate(FAKE_PAD)
 
   // The app starts on the seeded Home; wait for the shell to answer.
@@ -398,8 +441,6 @@ async function main() {
     return Boolean(heading)
   })()`)
 
-  const results = []
-  const check = (name, ok, detail) => results.push({ name, ok, detail })
   const describe = (bar) => `readout=${bar?.readout} width=${bar?.width}% state=${bar?.state}`
 
   /** Apply input, let one poll (90ms) and one UI tick (150ms) land, then read. */
@@ -806,7 +847,7 @@ async function main() {
   // a shelf can end mid-hold and stop producing steps.
   const beforeSearch = await route()
   const openedSearch = await clickButton('Search')
-  if (!openedSearch) throw new Error('Console search button not found')
+  if (!openedSearch) throw new Error(`Console search button not found — route=${JSON.stringify(await route())}`)
   await delay(700)
   await checkEntry('opening the search focuses its first content item')
   for (let attempt = 0; attempt < 12 && (await readFocus())?.label.length !== 1; attempt++) await key('ArrowDown')
