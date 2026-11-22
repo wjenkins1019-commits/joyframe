@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" width="1200" height="320">
+  <g transform="translate(40 56) scale(3.25)">
+    <rect width="64" height="64" rx="16" fill="none" stroke="#ffffff" stroke-width="3"/>
+    <path d="M41 13h8.4v26.3c0 8.1-5.3 13.2-13.2 13.2-6.7 0-11.6-3.6-13.2-9.7l7.9-2.2c.9 2.9 2.7 4.5 5.3 4.5 3.4 0 5.6-2.2 5.6-6.2V13z" fill="#ffffff"/>
+    <path d="M13 25.5l13.5 8.1L13 41.7V25.5z" fill="#ffffff"/>
+  </g>
+  <text x="284" y="176" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="112" font-weight="900" letter-spacing="12" fill="#ffffff">JOYFRAME</text>
+  <text x="288" y="218" font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="26" font-weight="600" letter-spacing="8" fill="#ffffff" fill-opacity="0.75">EVERY GAME. ONE UNIVERSE.</text>
+</svg>

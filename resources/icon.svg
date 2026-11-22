@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="jfIcon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E52442"/>
+      <stop offset="55%" stop-color="#D71935"/>
+      <stop offset="100%" stop-color="#A90F27"/>
+    </linearGradient>
+    <radialGradient id="jfGlow" cx="0.2" cy="0.1" r="0.9">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#jfIcon)"/>
+  <rect width="512" height="512" rx="128" fill="url(#jfGlow)"/>
+  <rect x="10" y="10" width="492" height="492" rx="120" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="4"/>
+  <path d="M328 104h67v210c0 65-42 106-106 106-54 0-93-29-106-78l63-18c7 23 22 36 43 36 27 0 45-18 45-50V104z" fill="#ffffff"/>
+  <path d="M104 204l108 65-108 65V204z" fill="#ffffff" opacity="0.96"/>
+  <path d="M416 194l52 31-52 31v-62z" fill="#15171B" opacity="0.35"/>
+</svg>
