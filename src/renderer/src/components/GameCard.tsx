@@ -4,6 +4,7 @@ import type { Game } from '@shared/types'
 import { formatPlaytime, relativeTime, starsFor } from '../lib/format'
 import { useStore } from '../state/store'
 import { Cover } from './Art'
+import { StreamVideo } from './VideoPlayer'
 import { cx } from './ui'
 
 export function GameCard({
@@ -83,9 +84,9 @@ export function GameCard({
         <Cover game={game} />
 
         {showVideo && game.videoUrl && (
-          <video
+          <StreamVideo
             ref={videoRef}
-            src={game.videoUrl}
+            url={game.videoUrl}
             className="absolute inset-0 h-full w-full animate-fade object-cover"
             autoPlay
             loop

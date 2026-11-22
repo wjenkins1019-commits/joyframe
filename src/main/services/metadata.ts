@@ -98,6 +98,9 @@ interface SteamAppDetails {
     name?: string
     mp4?: Record<string, string>
     webm?: Record<string, string>
+    /** Steam's current trailer format; legacy mp4/webm fields are often absent. */
+    hls_h264?: string
+    dash_h264?: string
   }[]
   metacritic?: { score?: number }
   categories?: { description: string }[]
@@ -152,7 +155,16 @@ async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): 
   }
 
   const movie = details.movies?.[0]
-  const videoUrl = movie?.mp4?.max ?? movie?.mp4?.['480'] ?? movie?.webm?.max ?? movie?.webm?.['480'] ?? ''
+  // Prefer progressive files when Steam still provides them; current payloads
+  // only carry an HLS manifest, which the renderer plays through hls.js. DASH is
+  // skipped because nothing here can play it.
+  const videoUrl =
+    movie?.mp4?.max ??
+    movie?.mp4?.['480'] ??
+    movie?.webm?.max ??
+    movie?.webm?.['480'] ??
+    movie?.hls_h264 ??
+    ''
   const yearMatch = details.release_date?.date?.match(/\b(19|20)\d{2}\b/)
   const genres = (details.genres ?? []).map((g) => g.description)
 

@@ -1,7 +1,50 @@
-import { useEffect } from 'react'
+import { useEffect, forwardRef, useRef } from 'react'
+import type { VideoHTMLAttributes } from 'react'
 import { ExternalLink, Volume2, VolumeX, X } from 'lucide-react'
 import { useState } from 'react'
+import Hls from 'hls.js'
 import { IconButton } from './ui'
+
+const isHlsUrl = (url: string): boolean => /\.m3u8(\?|$)/i.test(url)
+
+/**
+ * A <video> that also plays HLS. Steam's store API now hands out .m3u8 trailer
+ * manifests instead of MP4s, which Chromium cannot play on its own, so attach
+ * hls.js for those URLs and leave progressive files untouched. The worker is
+ * disabled because the renderer's CSP would block its blob worker.
+ */
+export const StreamVideo = forwardRef<HTMLVideoElement, { url: string } & VideoHTMLAttributes<HTMLVideoElement>>(
+  function StreamVideo({ url, ...props }, forwardedRef): React.JSX.Element {
+    const localRef = useRef<HTMLVideoElement | null>(null)
+    const hls = isHlsUrl(url)
+
+    useEffect(() => {
+      const video = localRef.current
+      if (!video || !hls) return
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url
+        return
+      }
+      if (!Hls.isSupported()) return
+      const instance = new Hls({ enableWorker: false })
+      instance.loadSource(url)
+      instance.attachMedia(video)
+      return () => instance.destroy()
+    }, [url, hls])
+
+    return (
+      <video
+        ref={(node) => {
+          localRef.current = node
+          if (typeof forwardedRef === 'function') forwardedRef(node)
+          else if (forwardedRef) forwardedRef.current = node
+        }}
+        src={hls ? undefined : url}
+        {...props}
+      />
+    )
+  }
+)
 
 function youtubeId(url: string): string | null {
   const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{6,})/)
@@ -62,8 +105,8 @@ export function TrailerOverlay({
             allowFullScreen
           />
         ) : (
-          <video
-            src={url}
+          <StreamVideo
+            url={url}
             controls
             autoPlay
             muted={muted}
@@ -89,8 +132,8 @@ export function InlineVideo({ url, title }: { url: string; title: string }): Rea
     )
   }
   return (
-    <video
-      src={url}
+    <StreamVideo
+      url={url}
       controls
       preload="metadata"
       className="aspect-video w-full rounded-xl border border-white/10 bg-black"
