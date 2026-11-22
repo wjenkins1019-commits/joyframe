@@ -118,25 +118,3 @@ export function TrailerOverlay({
   )
 }
 
-export function InlineVideo({ url, title }: { url: string; title: string }): React.JSX.Element {
-  const yt = youtubeId(url)
-  if (yt) {
-    return (
-      <iframe
-        src={`https://www.youtube-nocookie.com/embed/${yt}?rel=0`}
-        title={`${title} trailer`}
-        className="aspect-video w-full rounded-xl border border-white/10"
-        allow="accelerometer; encrypted-media; picture-in-picture"
-        allowFullScreen
-      />
-    )
-  }
-  return (
-    <StreamVideo
-      url={url}
-      controls
-      preload="metadata"
-      className="aspect-video w-full rounded-xl border border-white/10 bg-black"
-    />
-  )
-}

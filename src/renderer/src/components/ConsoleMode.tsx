@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Delete, Gamepad2, Play, Search, Star, Tv, X } from 'lucide-react'
+import { ArrowLeft, Delete, Gamepad2, Play, Search, Square, Star, Tv, X } from 'lucide-react'
 import type { Game } from '@shared/types'
 import { formatPlaytime, relativeTime } from '../lib/format'
 import { visibleGames } from '../lib/games'
@@ -131,9 +131,12 @@ function ConsoleSearch({ onClose }: { onClose: () => void }): React.JSX.Element 
 
 function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
   const play = useStore((state) => state.play)
+  const stopGame = useStore((state) => state.stopGame)
+  const playState = useStore((state) => state.playState)
   const openDetail = useStore((state) => state.openDetail)
   const lastPlayed = useStore((state) => state.lastPlayed)
   const isResume = lastPlayed?.id === game.id
+  const running = playState.gameId === game.id && playState.state !== 'idle'
 
   return (
     <section className="relative overflow-hidden rounded-2xl border border-white/10">
@@ -156,8 +159,23 @@ function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
             {game.description || 'Ready to play.'}
           </p>
           <div className="mt-5 flex items-center gap-3">
-            <GlassButton size="lg" tone="play" icon={<Play className="h-4.5 w-4.5 fill-current" />} onClick={() => void play(game.id)}>
+            <GlassButton
+              size="lg"
+              tone="play"
+              icon={<Play className="h-4.5 w-4.5 fill-current" />}
+              onClick={() => void play(game.id)}
+              disabled={running}
+            >
               {isResume ? 'Resume' : 'Play'}
+            </GlassButton>
+            <GlassButton
+              size="lg"
+              tone="stop"
+              icon={<Square className="h-3.5 w-3.5 fill-current" />}
+              onClick={() => void stopGame()}
+              disabled={!running}
+            >
+              Stop
             </GlassButton>
             <Button size="lg" variant="secondary" onClick={() => openDetail(game.id)}>
               Details
