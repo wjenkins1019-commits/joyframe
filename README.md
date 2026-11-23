@@ -195,7 +195,10 @@ built from `scripts/fixtures/schema-1.0.0.sql` (home rows plus the Library view,
 hidden). It fails on any renderer console error and removes both profiles afterwards. `npm run verify:dist-pad`
 runs the virtual-gamepad suite against the same packaged exe on a seeded demo profile, covering controller navigation,
 Console Mode and modal back-stack behaviour in the shipped build rather than only dev Electron. Both packaged checks
-refuse to run when `out/` is newer than `release/win-unpacked/resources/app.asar`, so run `npm run dist` after rebuilding.
+compare the contents of `release/win-unpacked/resources/app.asar` with the current `out/` by SHA-256 and refuse to run
+when they differ — a rebuild that produces identical bytes (a test-only change) leaves the package valid, while any
+real difference still asks for `npm run dist`. `npm run check` ends by reporting that comparison, so a stale package
+is stated rather than discovered later.
 `npm run verify:first-run` complements them: it boots the packaged exe on a **clean** throwaway profile and checks the
 first-run experience — the welcome screen, zero home cards/rows, an empty Library view, zero games/collections/
 emulators/scan paths through the preload API, and a newly created database with no library rows (platforms and
@@ -265,12 +268,12 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:dist` | Boot the packaged build against seeded demo and 1.0.0 profiles; check Home, Console Mode and the upgraded library |
 | `npm run verify:dist-pad` | Run the controller suite against the packaged build on a seeded demo profile |
 | `npm run verify:first-run` | Boot the packaged build on a throwaway empty profile; check the welcome screen, empty library and fresh database |
-| `npm run verify:freshness` | Exercise the packaged-build staleness guard with fixture files, without touching `release/` |
+| `npm run verify:freshness` | Exercise the packaged-build content guard with real fixture archives, without touching `release/` |
 | `npm run verify:intro` | Boot dev Electron on a throwaway profile: auto-advance, key/click/controller skip, `off`, and a seen `first-run`; then the plays-once first-run probe |
 | `npm run verify:intro-ui` | Cycle the Startup intro dropdown through every mode with real clicks and keys, restarting after each and checking disk plus launch behaviour |
 | `npm run verify:intro-pad` | Reach and step the Startup intro dropdown with the pad alone, then restart to prove the choice persisted |
 | `npm run verify:installed-build` | Fail when `C:\Program Files\JOYFRAME` is not byte-for-byte the build in `release/win-unpacked` |
 | `npm run verify:installed` | Check that integrity, then drive the machine-wide copy (`JOYFRAME_EXE` overrides the exe): ident, skip without click-through, `off` |
-| `npm run check` | Typecheck, smoke, freshness guard, pad suite, then all three intro suites |
+| `npm run check` | Typecheck, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |
