@@ -128,7 +128,7 @@ function parseCollectionRule(value: unknown): CollectionRule | null {
   }
 }
 
-export function listCollections(db: Db): Collection[] {
+export function listCollections(db: Db, allGames?: Game[]): Collection[] {
   const rows = db.prepare('SELECT * FROM collections ORDER BY sort_order ASC, name ASC').all() as Record<
     string,
     unknown
@@ -138,11 +138,11 @@ export function listCollections(db: Db): Collection[] {
   // for manual collections.
   const platforms = getPlatforms(db)
   const families = new Map(platforms.map((platform) => [platform.id, platform.family]))
-  const allGames = queryGames(db, {}, true)
+  const games = allGames ?? queryGames(db, {}, true)
   return rows.map((row) => {
     const rule = parseCollectionRule(row.rule)
     if (rule) {
-      const ids = allGames.filter((game) => matchesRule(game, rule, families)).map((game) => game.id)
+      const ids = games.filter((game) => matchesRule(game, rule, families)).map((game) => game.id)
       return rowToCollection({ ...row, kind: 'smart' }, ids)
     }
     return rowToCollection(row, collectionGameIds(db, String(row.id)))
@@ -269,12 +269,17 @@ function matchesRule(game: Game, rule: CollectionRule, platformFamilies: Map<str
   return test(rule)
 }
 
-export function buildHomeRows(db: Db, hiddenGamesIncluded = false): HomeRow[] {
-  const games = queryGames(db, {}, hiddenGamesIncluded)
+export function buildHomeRows(
+  db: Db,
+  hiddenGamesIncluded = false,
+  gamesIn?: Game[],
+  collectionsIn?: Collection[]
+): HomeRow[] {
+  const games = gamesIn ?? queryGames(db, {}, hiddenGamesIncluded)
   const platforms = getPlatforms(db)
   const families = new Map(platforms.map((p) => [p.id, p.family]))
   const sections = listSections(db).filter((s) => !s.hidden)
-  const collections = listCollections(db)
+  const collections = collectionsIn ?? listCollections(db, gamesIn)
   const byId = new Map(games.map((g) => [g.id, g]))
   const played = games.filter((g) => g.lastPlayed)
 
@@ -358,8 +363,8 @@ export function buildHomeRows(db: Db, hiddenGamesIncluded = false): HomeRow[] {
 /* Statistics                                                          */
 /* ------------------------------------------------------------------ */
 
-export function getStats(db: Db): StatsSummary {
-  const games = queryGames(db, {}, true)
+export function getStats(db: Db, gamesIn?: Game[]): StatsSummary {
+  const games = gamesIn ?? queryGames(db, {}, true)
   const platforms = getPlatforms(db)
   const platformMap = new Map(platforms.map((p) => [p.id, p.name]))
   const sessions = db.prepare('SELECT * FROM play_sessions').all() as Record<string, unknown>[]

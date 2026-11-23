@@ -149,7 +149,10 @@ CREATE TABLE IF NOT EXISTS play_sessions (
   started_at TEXT NOT NULL,
   ended_at TEXT NOT NULL DEFAULT '',
   seconds INTEGER NOT NULL DEFAULT 0,
-  source TEXT NOT NULL DEFAULT ''
+  source TEXT NOT NULL DEFAULT '',
+  pid INTEGER,
+  exe TEXT NOT NULL DEFAULT '',
+  recovered INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_game ON play_sessions(game_id);
 
@@ -177,8 +180,25 @@ export function openDatabase(file: string): Db {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const db = new DatabaseSync(file)
   db.exec(SCHEMA)
+  migrateColumns(db)
   seedPlatforms(db)
   return db
+}
+
+function ensureColumn(db: Db, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (columns.some((entry) => entry.name === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
+
+/**
+ * Columns added after 1.0.0 only exist in freshly created databases, so each
+ * one also needs an ALTER TABLE here for profiles that already shipped.
+ */
+function migrateColumns(db: Db): void {
+  ensureColumn(db, 'play_sessions', 'pid', 'INTEGER')
+  ensureColumn(db, 'play_sessions', 'exe', "TEXT NOT NULL DEFAULT ''")
+  ensureColumn(db, 'play_sessions', 'recovered', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 function seedPlatforms(db: Db): void {

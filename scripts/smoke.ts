@@ -7,6 +7,7 @@
  * playtime tracking. Run with `npm run smoke`.
  */
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -15,7 +16,8 @@ import { addEmulator, testEmulator } from '../src/main/services/emulators.ts'
 import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
 import { buildHomeRows, createCollection, getStats, listCollections, listSections } from '../src/main/services/library.ts'
 import { providerStatuses } from '../src/main/services/metadata.ts'
-import { queryGames, updateGameRecord } from '../src/main/services/repo.ts'
+import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
+import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
 import { scanPcFolders, scanRomFolders } from '../src/main/services/scanner.ts'
 import { getSettings, updateSettings } from '../src/main/services/settings.ts'
@@ -292,6 +294,14 @@ await check('Statistics summarise the library', () => {
   assert.ok(stats.bySource.some((entry) => entry.source === 'steam'))
 })
 
+await check('Payload builders reuse one game query without changing results', () => {
+  const games = queryGames(db, {}, true)
+  const collections = listCollections(db, games)
+  assert.deepEqual(getStats(db, games), getStats(db))
+  assert.deepEqual(listCollections(db, games), listCollections(db))
+  assert.deepEqual(buildHomeRows(db, false, games, collections), buildHomeRows(db, false))
+})
+
 await check('Default home sections are seeded and editable', () => {
   const sections = listSections(db)
   assert.ok(sections.length >= 19)
@@ -334,25 +344,151 @@ await check('Launcher spawns a process, tracks it and records playtime', async (
   assert.equal(result.tracked, true)
   assert.equal(launcher.getState().state, 'running')
 
+  // The ledger row exists while the game runs, so a crash cannot lose it.
+  const open = listOpenSessions(db).find((session) => session.gameId === rom.id)
+  assert.ok(open, 'launch did not record an open session')
+  assert.equal(open.pid, launcher.getState().pid)
+
   const deadline = Date.now() + 20_000
   while (launcher.getState().state !== 'idle' && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 300))
   }
   assert.equal(launcher.getState().state, 'idle', 'launcher did not return to idle')
   assert.ok(states.includes('running'))
+  const closed = db.prepare('SELECT ended_at, seconds FROM play_sessions WHERE id = ?').get(open.id) as {
+    ended_at: string
+    seconds: number
+  }
+  assert.ok(closed.ended_at.length > 0, 'finished session was never closed')
+  assert.ok(closed.seconds >= 5)
   const updated = queryGames(db, { search: 'Super Mario Bros' }, true)[0]
   assert.ok(updated.playtimeSeconds >= 5, `playtime ${updated.playtimeSeconds}`)
   assert.ok(updated.lastPlayed.length > 0)
   assert.equal(updated.playCount, 1)
 })
 
-console.log('\n[7] Settings, providers and backups')
+await check('Protocol launch is observable and cancelable before the game appears', async () => {
+  const tf2 = queryGames(db, { search: 'Team Fortress' }, true)[0]
+  assert.ok(tf2, 'Steam fixture missing')
+  const opened: string[] = []
+  const states: string[] = []
+  const launcher = new Launcher(db, {
+    emit: (state) => states.push(state.state),
+    openExternal: async (url) => {
+      opened.push(url)
+    },
+    settings: () => getSettings(db)
+  })
+  const countSessions = (): number =>
+    (db.prepare('SELECT COUNT(*) AS c FROM play_sessions WHERE game_id = ?').get(tf2.id) as { c: number }).c
+  const before = countSessions()
+
+  const result = await launcher.launch(tf2.id)
+  assert.equal(result.ok, true, result.message)
+  assert.equal(opened.length, 1)
+  assert.match(opened[0], /^steam:\/\/rungameid\//)
+
+  const live = launcher.getState()
+  assert.equal(live.state, 'launching')
+  assert.equal(live.observing, true)
+  assert.ok(live.observeUntil, 'observation window has no deadline')
+
+  assert.equal(await launcher.stop(), true)
+  assert.equal(launcher.getState().state, 'idle')
+  assert.equal(launcher.getState().notice, null)
+  assert.equal(countSessions(), before, 'a cancelled observation should not record a session')
+})
+
+console.log('\n[7] Crash recovery')
+await check('Startup reconciliation closes a session whose process is gone', async () => {
+  const game = queryGames(db, {}, true)[0]
+  const id = uid()
+  startSession(db, {
+    id,
+    gameId: game.id,
+    startedAt: new Date(Date.now() - 60_000).toISOString(),
+    source: 'executable',
+    pid: 987654,
+    exe: 'C:/nowhere/game.exe'
+  })
+  const report = await reconcileOpenSessions(db)
+  assert.ok(report.closed >= 1, 'crashed session was not closed')
+  const row = db.prepare('SELECT ended_at, seconds, recovered FROM play_sessions WHERE id = ?').get(id) as {
+    ended_at: string
+    seconds: number
+    recovered: number
+  }
+  assert.ok(row.ended_at.length > 0)
+  assert.equal(row.seconds, 0)
+  assert.equal(row.recovered, 1)
+})
+
+await check('A game still running from a previous run is adopted and can be stopped', async () => {
+  const game = queryGames(db, {}, true)[0]
+  const id = uid()
+  // Stand in for a game that outlived the launcher.
+  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' })
+  assert.ok(sleeper.pid)
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  startSession(db, {
+    id,
+    gameId: game.id,
+    startedAt: new Date(Date.now() - 30_000).toISOString(),
+    source: 'executable',
+    pid: sleeper.pid,
+    exe: process.execPath
+  })
+  const report = await reconcileOpenSessions(db)
+  const live = report.live.find((session) => session.id === id)
+  assert.ok(live, 'surviving session was not recognised')
+
+  const launcher = new Launcher(db, {
+    emit: () => undefined,
+    openExternal: async () => undefined,
+    settings: () => getSettings(db)
+  })
+  assert.equal(launcher.adopt(live), true)
+  const state = launcher.getState()
+  assert.equal(state.state, 'running')
+  assert.equal(state.recovered, true)
+  assert.equal(state.gameId, game.id)
+
+  assert.equal(await launcher.stop(), true)
+  assert.equal(launcher.getState().state, 'idle')
+  assert.equal(launcher.getState().recovered, false)
+  const row = db.prepare('SELECT ended_at, seconds FROM play_sessions WHERE id = ?').get(id) as {
+    ended_at: string
+    seconds: number
+  }
+  assert.ok(row.ended_at.length > 0)
+  assert.ok(row.seconds >= 25, `adopted session recorded ${row.seconds}s`)
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  let alive = true
+  try {
+    process.kill(sleeper.pid, 0)
+  } catch {
+    alive = false
+  }
+  assert.equal(alive, false, 'stopping the adopted session left the game running')
+})
+
+console.log('\n[8] Settings, providers and backups')
 await check('Settings persist across reads', () => {
   updateSettings(db, { autoPreviews: false, previewDelay: 2400, steamPath: steamRoot })
   const settings = getSettings(db)
   assert.equal(settings.autoPreviews, false)
   assert.equal(settings.previewDelay, 2400)
   assert.equal(settings.steamPath, steamRoot)
+})
+
+await check('Startup intro preference persists with a sane default', () => {
+  assert.equal(getSettings(db).introMode, 'always')
+  updateSettings(db, { introMode: 'first-run' })
+  assert.equal(getSettings(db).introMode, 'first-run')
+  updateSettings(db, { introMode: 'off' })
+  assert.equal(getSettings(db).introMode, 'off')
+  updateSettings(db, { introMode: 'always' })
 })
 
 await check('Metadata provider status reflects configured credentials', () => {
@@ -384,7 +520,7 @@ await check('Settings and game data survive a database reopen', () => {
   reopened.close()
 })
 
-console.log('\n[8] Upgrading a 1.0.0 profile')
+console.log('\n[9] Upgrading a 1.0.0 profile')
 // A real profile from the shipped 1.0.0 build: its exact schema plus the
 // content a used library would have, opened with the current services. A new
 // column in SCHEMA only lands in brand-new databases, so this fails unless

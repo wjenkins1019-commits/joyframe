@@ -9,6 +9,7 @@ import { resolveArtworkPath } from './services/artwork.ts'
 import { createBackup } from './services/backup.ts'
 import { openDatabase, type Db } from './services/db.ts'
 import { Launcher } from './services/launcher.ts'
+import { closeInterruptedSession, reconcileOpenSessions } from './services/sessions.ts'
 import { getSettings } from './services/settings.ts'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -91,6 +92,26 @@ async function bootstrap(): Promise<void> {
   })
 
   registerIpc(createHandlers(ctx))
+
+  // A crash leaves sessions open. Settle them before the window reads state:
+  // close the ones whose process is gone, and adopt the ones still running so
+  // the UI can offer to stop them.
+  try {
+    const recovery = await reconcileOpenSessions(database)
+    let adopted = 0
+    for (const session of recovery.live) {
+      if (launcher.adopt(session)) adopted += 1
+      else closeInterruptedSession(database, session.id)
+    }
+    if (adopted > 0 || recovery.closed > 0) {
+      logToFile(`session recovery: ${adopted} still running, ${recovery.closed} closed`)
+      if (process.env.JOYFRAME_DEBUG) {
+        console.log(`[joyframe] session recovery: ${adopted} running, ${recovery.closed} closed`)
+      }
+    }
+  } catch (error) {
+    logToFile(`session recovery failed: ${(error as Error).message}`)
+  }
 
   createWindow()
 

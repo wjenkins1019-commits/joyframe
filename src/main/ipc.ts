@@ -14,6 +14,7 @@ import type {
   LaunchMethod,
   LaunchResult,
   LibraryQuery,
+  LibrarySummary,
   ScanProgress,
   ScanResult,
   SteamDetection
@@ -50,7 +51,7 @@ import {
 import { getPlatforms, getGame, insertGame, nowIso, queryGames, uid, updateGameRecord, deleteGame } from './services/repo.ts'
 import { markSavesScanned, listSaves, removeSaveRecord, scanSaves, saveSummary } from './services/saves.ts'
 import { scanPcFolders, scanRomFolders } from './services/scanner.ts'
-import { getSettings, updateSettings } from './services/settings.ts'
+import { getMeta, getSettings, setMeta, updateSettings } from './services/settings.ts'
 import { detectSteam, importSteamGames, steamLaunchUrl } from './services/steam.ts'
 import { registerIpc } from './ipc-helpers.ts'
 
@@ -76,26 +77,54 @@ export function createContext(db: Db, info: AppInfo, launcher: Launcher, setSett
 
 export { registerIpc }
 
-export function buildInitPayload(ctx: AppContext): InitPayload {
-  const settings = getSettings(ctx.db)
-  const games = queryGames(ctx.db, {}, true)
-  const lastPlayedGame =
+/** Home shelves honour the hidden-games setting even when one query served every section. */
+function visibleGames(games: Game[], showHidden: boolean): Game[] {
+  return showHidden ? games : games.filter((game) => !game.hidden)
+}
+
+function mostRecentlyPlayed(games: Game[]): Game | null {
+  return (
     [...games]
       .filter((g) => g.lastPlayed)
       .sort((a, b) => new Date(b.lastPlayed).getTime() - new Date(a.lastPlayed).getTime())[0] ?? null
+  )
+}
+
+/**
+ * Build the parts of the payload a mutation can change, reusing a single game
+ * query for collections, statistics and shelves instead of loading the whole
+ * library four times.
+ */
+export function buildSummaryPayload(ctx: AppContext): LibrarySummary {
+  const settings = getSettings(ctx.db)
+  const games = queryGames(ctx.db, {}, true)
+  const collections = listCollections(ctx.db, games)
+  return {
+    collections,
+    stats: getStats(ctx.db, games),
+    home: buildHomeRows(ctx.db, settings.showHidden, visibleGames(games, settings.showHidden), collections),
+    lastPlayedGame: mostRecentlyPlayed(games)
+  }
+}
+
+export function buildInitPayload(ctx: AppContext): InitPayload {
+  const settings = getSettings(ctx.db)
+  const games = queryGames(ctx.db, {}, true)
+  const collections = listCollections(ctx.db, games)
   return {
     games,
     platforms: getPlatforms(ctx.db),
-    collections: listCollections(ctx.db),
+    collections,
     sections: listSections(ctx.db),
     emulators: listEmulators(ctx.db),
     settings,
-    stats: getStats(ctx.db),
-    home: buildHomeRows(ctx.db, settings.showHidden),
+    stats: getStats(ctx.db, games),
+    home: buildHomeRows(ctx.db, settings.showHidden, visibleGames(games, settings.showHidden), collections),
     info: ctx.info,
     playState: ctx.launcher.getState(),
-    lastPlayedGame,
-    providers: providerStatuses(settings)
+    lastPlayedGame: mostRecentlyPlayed(games),
+    providers: providerStatuses(settings),
+    introPlayed: getMeta(ctx.db, 'introPlayed') === '1'
   }
 }
 
@@ -127,6 +156,10 @@ export function createHandlers(ctx: AppContext) {
       return payload
     },
     'app:info': () => ctx.info,
+    'app:summary': () => buildSummaryPayload(ctx),
+    'app:introPlayed': () => {
+      setMeta(ctx.db, 'introPlayed', '1')
+    },
 
     'library:list': (query: LibraryQuery) => queryGames(ctx.db, query ?? {}, getSettings(ctx.db).showHidden),
     'library:get': (id: string) => getGame(ctx.db, id),
@@ -264,6 +297,8 @@ export function createHandlers(ctx: AppContext) {
 
     'launch:game': (gameId: string) => ctx.launcher.launch(gameId),
     'launch:stop': () => ctx.launcher.stop(),
+    'launch:retry': () => ctx.launcher.retry(),
+    'launch:dismiss': () => ctx.launcher.dismissNotice(),
     'launch:state': () => ctx.launcher.getState(),
 
     'collections:list': () => listCollections(ctx.db),

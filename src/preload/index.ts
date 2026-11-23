@@ -48,6 +48,8 @@ const api: JoyframeApi = {
   launch: {
     game: (gameId) => ipcRenderer.invoke('launch:game', gameId),
     stop: () => ipcRenderer.invoke('launch:stop'),
+    retry: () => ipcRenderer.invoke('launch:retry'),
+    dismissNotice: () => ipcRenderer.invoke('launch:dismiss'),
     state: () => ipcRenderer.invoke('launch:state'),
     onState: (callback) => subscribe('play:state', callback)
   },
@@ -105,7 +107,9 @@ const api: JoyframeApi = {
     setFullScreen: (on) => ipcRenderer.invoke('system:fullscreen', on)
   },
   app: {
-    info: () => ipcRenderer.invoke('app:info')
+    info: () => ipcRenderer.invoke('app:info'),
+    summary: () => ipcRenderer.invoke('app:summary'),
+    markIntroPlayed: () => ipcRenderer.invoke('app:introPlayed')
   }
 }
 

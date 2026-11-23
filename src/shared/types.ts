@@ -188,6 +188,8 @@ export interface PlaySession {
 export interface AppSettings {
   themeAccent: string
   consoleModeOnStartup: boolean
+  /** Whether the animated startup ident plays every launch, once, or never. */
+  introMode: 'always' | 'first-run' | 'off'
   autoPreviews: boolean
   previewDelay: number
   previewVolume: number
@@ -213,6 +215,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   themeAccent: '#D71935',
   consoleModeOnStartup: false,
+  introMode: 'always',
   autoPreviews: true,
   previewDelay: 1200,
   previewVolume: 0,
@@ -292,12 +295,30 @@ export interface LaunchResult {
   tracked: boolean
 }
 
+export interface LaunchNotice {
+  gameId: string
+  title: string
+  /** 'timeout' means the protocol launch never produced a game process. */
+  reason: 'timeout' | 'error'
+  message: string
+  at: string
+}
+
 export interface PlayState {
   gameId: string | null
+  /** 'launching' while a protocol launch is still being observed. */
   state: 'idle' | 'launching' | 'running'
   startedAt: string | null
   pid: number | null
   tracked: boolean
+  /** True only for protocol launches waiting for their process to appear. */
+  observing: boolean
+  /** ISO deadline of the bounded observation window, while observing. */
+  observeUntil: string | null
+  /** Set when a launch gave up; the UI offers Retry / Cancel. */
+  notice: LaunchNotice | null
+  /** True when this is a session adopted from the previous run after a crash. */
+  recovered?: boolean
 }
 
 export interface ArtworkCandidate {
@@ -357,6 +378,19 @@ export interface InitPayload {
   playState: PlayState
   lastPlayedGame: Game | null
   providers: ProviderStatus[]
+  /** True once this profile has shown a startup intro. */
+  introPlayed: boolean
+}
+
+/**
+ * The slice of the init payload a mutation can change. Refreshing this after
+ * a per-game edit avoids re-sending the whole 2,000-game library.
+ */
+export interface LibrarySummary {
+  collections: Collection[]
+  stats: StatsSummary
+  home: HomeRow[]
+  lastPlayedGame: Game | null
 }
 
 export interface HomeRow {
@@ -432,6 +466,10 @@ export interface JoyframeApi {
   launch: {
     game(gameId: string): Promise<LaunchResult>
     stop(): Promise<boolean>
+    /** Re-run the launch named by the pending notice. */
+    retry(): Promise<LaunchResult>
+    /** Clear the pending launch notice without launching. */
+    dismissNotice(): Promise<PlayState>
     state(): Promise<PlayState>
     onState(cb: (state: PlayState) => void): () => void
   }
@@ -490,6 +528,9 @@ export interface JoyframeApi {
   }
   app: {
     info(): Promise<AppInfo>
+    summary(): Promise<LibrarySummary>
+    /** Remember that this profile has seen the startup intro. */
+    markIntroPlayed(): Promise<void>
   }
 }
 
