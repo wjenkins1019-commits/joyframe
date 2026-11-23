@@ -2,6 +2,8 @@ import type {
   AppSettings,
   ArtworkCandidate,
   Game,
+  MetadataFailureReason,
+  MetadataRefreshSummary,
   MetadataResult,
   ProviderStatus,
   Screenshot
@@ -17,9 +19,133 @@ export interface MetadataDeps {
   artworkDir: string
   /** false keeps remote URLs so the library stores no cover files of its own. */
   cacheArtwork: boolean
+  /** Shared by one bulk refresh so a run cannot exceed its request allowance. */
+  budget?: RequestBudget
 }
 
 const STEAM_CDN = 'https://cdn.cloudflare.steamstatic.com/steam/apps'
+
+export type MetadataProviderId = 'steam' | 'rawg' | 'igdb'
+
+/** Per-provider request allowance for one "refresh all" run. */
+export const DEFAULT_REQUEST_BUDGET: Record<MetadataProviderId, number> = {
+  steam: 60,
+  rawg: 40,
+  igdb: 40
+}
+
+export interface RequestBudget {
+  spent: Record<MetadataProviderId, number>
+  take(provider: MetadataProviderId): boolean
+  remaining(provider: MetadataProviderId): number
+  /** True once every provider the current run can use has spent its allowance. */
+  exhausted(providers?: MetadataProviderId[]): boolean
+}
+
+export function createRequestBudget(
+  limits: Partial<Record<MetadataProviderId, number>> = {}
+): RequestBudget {
+  const caps = { ...DEFAULT_REQUEST_BUDGET, ...limits }
+  const spent: Record<MetadataProviderId, number> = { steam: 0, rawg: 0, igdb: 0 }
+  return {
+    spent,
+    take(provider) {
+      if (spent[provider] >= caps[provider]) return false
+      spent[provider] += 1
+      return true
+    },
+    remaining(provider) {
+      return Math.max(0, caps[provider] - spent[provider])
+    },
+    exhausted(providers = ['steam', 'rawg', 'igdb']) {
+      return providers.every((provider) => spent[provider] >= caps[provider])
+    }
+  }
+}
+
+const RETRY_WAIT_MS = 1500
+const MAX_RETRY_WAIT_MS = 5000
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** HTTP status -> the reason a bulk refresh should report. */
+export function reasonForStatus(status: number): MetadataFailureReason {
+  if (status === 401 || status === 403) return 'auth'
+  if (status === 429 || status >= 500) return 'rate-limit'
+  return 'no-match'
+}
+
+export function failureMessage(provider: MetadataProviderId, reason: MetadataFailureReason): string {
+  const name = provider === 'rawg' ? 'RAWG' : provider === 'igdb' ? 'IGDB' : 'Steam Store'
+  switch (reason) {
+    case 'auth':
+      return `${name} rejected the credentials. Check the API key in Settings.`
+    case 'rate-limit':
+      return `${name} rate-limited the request. Try again in a few minutes.`
+    case 'budget':
+      return `The ${name} request budget for this refresh ran out.`
+    case 'offline':
+      return `${name} could not be reached. Check your connection and try again.`
+    default:
+      return `${name} had no match for this game.`
+  }
+}
+
+function retryDelay(response: Response): number {
+  const header = response.headers.get('retry-after')
+  if (!header) return RETRY_WAIT_MS
+  const seconds = Number(header)
+  if (Number.isFinite(seconds)) return Math.min(MAX_RETRY_WAIT_MS, Math.max(500, seconds * 1000))
+  const at = Date.parse(header)
+  if (!Number.isFinite(at)) return RETRY_WAIT_MS
+  return Math.min(MAX_RETRY_WAIT_MS, Math.max(500, at - Date.now()))
+}
+
+type FetchOutcome<T> = { data: T } | { reason: MetadataFailureReason }
+
+/**
+ * One provider request that respects the run's request budget, retries once
+ * after a rate limit or server error (honouring Retry-After), and reports why
+ * it failed so a bulk refresh can tell a rejected key, throttling and a plain
+ * no-match apart. Budget is spent per attempt, so a retry cannot exceed the cap.
+ */
+export async function fetchJson<T>(
+  deps: MetadataDeps,
+  provider: MetadataProviderId,
+  url: string | URL,
+  init: RequestInit = {}
+): Promise<FetchOutcome<T>> {
+  let reason: MetadataFailureReason = 'offline'
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (deps.budget && !deps.budget.take(provider)) return { reason: 'budget' }
+    let response: Response
+    try {
+      response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) })
+    } catch {
+      reason = 'offline'
+      if (attempt === 0) {
+        await sleep(RETRY_WAIT_MS)
+        continue
+      }
+      return { reason }
+    }
+    if (response.ok) {
+      try {
+        return { data: (await response.json()) as T }
+      } catch {
+        return { reason: 'offline' }
+      }
+    }
+    reason = reasonForStatus(response.status)
+    const retryable = response.status === 429 || response.status >= 500
+    if (retryable && attempt === 0) {
+      await sleep(retryDelay(response))
+      continue
+    }
+    return { reason }
+  }
+  return { reason }
+}
 
 /**
  * Resolve artwork according to the storage preference: either download it into
@@ -114,20 +240,22 @@ interface SteamAppDetails {
   categories?: { description: string }[]
 }
 
-async function fetchSteamDetails(appid: string): Promise<SteamAppDetails | null> {
-  try {
-    const response = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&l=english`, {
-      signal: AbortSignal.timeout(15_000),
-      headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
-    })
-    if (!response.ok) return null
-    const json = (await response.json()) as Record<string, { success: boolean; data?: SteamAppDetails }>
-    const entry = json[appid]
-    if (!entry?.success || !entry.data) return null
-    return entry.data
-  } catch {
-    return null
-  }
+async function fetchSteamDetails(
+  deps: MetadataDeps,
+  appid: string
+): Promise<{ details: SteamAppDetails } | { reason: MetadataFailureReason }> {
+  const outcome = await fetchJson<Record<string, { success: boolean; data?: SteamAppDetails }>>(
+    deps,
+    'steam',
+    `https://store.steampowered.com/api/appdetails?appids=${appid}&l=english`,
+    { headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' } }
+  )
+  // Steam has no credentials of its own, so a 401/403 here is a lookup refusal
+  // rather than a key problem; report it as no match for this App ID.
+  if ('reason' in outcome) return { reason: outcome.reason === 'auth' ? 'no-match' : outcome.reason }
+  const entry = outcome.data[appid]
+  if (!entry?.success || !entry.data) return { reason: 'no-match' }
+  return { details: entry.data }
 }
 
 interface SteamStoreItem {
@@ -154,22 +282,20 @@ export function steamStoreMatch(title: string, items: SteamStoreItem[]): string 
  * Keyless title -> App ID resolution through the public store search, so titles
  * added from GOG, Epic or itch can reuse the Steam Store enrichment.
  */
-async function searchSteamAppId(title: string): Promise<string> {
-  try {
-    const url = new URL('https://store.steampowered.com/api/storesearch/')
-    url.searchParams.set('term', title)
-    url.searchParams.set('l', 'english')
-    url.searchParams.set('cc', 'US')
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(15_000),
-      headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
-    })
-    if (!response.ok) return ''
-    const json = (await response.json()) as { items?: SteamStoreItem[] }
-    return steamStoreMatch(title, json.items ?? [])
-  } catch {
-    return ''
-  }
+async function searchSteamAppId(
+  deps: MetadataDeps,
+  title: string
+): Promise<{ appid: string } | { reason: MetadataFailureReason }> {
+  const url = new URL('https://store.steampowered.com/api/storesearch/')
+  url.searchParams.set('term', title)
+  url.searchParams.set('l', 'english')
+  url.searchParams.set('cc', 'US')
+  const outcome = await fetchJson<{ items?: SteamStoreItem[] }>(deps, 'steam', url, {
+    headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
+  })
+  if ('reason' in outcome) return { reason: outcome.reason }
+  const appid = steamStoreMatch(title, outcome.data.items ?? [])
+  return appid ? { appid } : { reason: 'no-match' }
 }
 
 /**
@@ -196,15 +322,17 @@ async function enrichFromSteam(
   if (!force && game.metadataConfidence >= 0.9 && game.description) {
     return { ok: true, provider: 'steam', confidence: game.metadataConfidence, message: 'Metadata already cached.' }
   }
-  const details = await fetchSteamDetails(appid)
-  if (!details) {
+  const fetched = await fetchSteamDetails(deps, appid)
+  if ('reason' in fetched) {
     return {
       ok: false,
       provider: 'steam',
       confidence: 0,
-      message: 'Steam returned no data for this App ID. Check your connection and try again.'
+      reason: fetched.reason,
+      message: failureMessage('steam', fetched.reason)
     }
   }
+  const details = fetched.details
 
   const art = steamArtworkUrls(appid)
   const base = `steam-${appid}`
@@ -292,23 +420,16 @@ export interface RawgGame {
 }
 
 async function rawgGet<T>(
-  settings: AppSettings,
+  deps: MetadataDeps,
   route: string,
   params: Record<string, string> = {}
-): Promise<T | null> {
+): Promise<FetchOutcome<T>> {
   const url = new URL(`${RAWG_BASE}${route}`)
-  url.searchParams.set('key', settings.rawgApiKey)
+  url.searchParams.set('key', deps.settings.rawgApiKey)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(15_000),
-      headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
-    })
-    if (!response.ok) return null
-    return (await response.json()) as T
-  } catch {
-    return null
-  }
+  return fetchJson<T>(deps, 'rawg', url, {
+    headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
+  })
 }
 
 /**
@@ -350,33 +471,57 @@ async function enrichFromRawg(deps: MetadataDeps, game: Game): Promise<MetadataR
       ok: false,
       provider: 'rawg',
       confidence: 0,
+      reason: 'auth',
       message: 'RAWG API key is not configured. Add your free key in Settings.'
     }
   }
 
-  const search = await rawgGet<{ results?: RawgGame[] }>(settings, '/games', {
+  const search = await rawgGet<{ results?: RawgGame[] }>(deps, '/games', {
     search: game.title,
     page_size: '5'
   })
-  const results = search?.results ?? []
+  if ('reason' in search) {
+    return {
+      ok: false,
+      provider: 'rawg',
+      confidence: 0,
+      reason: search.reason,
+      message: failureMessage('rawg', search.reason)
+    }
+  }
+  const results = search.data.results ?? []
   if (!results.length) {
-    return { ok: false, provider: 'rawg', confidence: 0, message: 'RAWG has no match for this title.' }
+    return {
+      ok: false,
+      provider: 'rawg',
+      confidence: 0,
+      reason: 'no-match',
+      message: failureMessage('rawg', 'no-match')
+    }
   }
   const best = results
     .map((entry) => ({ entry, score: titleScore(game.title, entry.name) }))
     .sort((a, b) => b.score - a.score)[0]
   if (best.score <= 0) {
-    return { ok: false, provider: 'rawg', confidence: 0, message: 'RAWG returned no close title match.' }
+    return {
+      ok: false,
+      provider: 'rawg',
+      confidence: 0,
+      reason: 'no-match',
+      message: failureMessage('rawg', 'no-match')
+    }
   }
 
   // The detail call adds descriptions, companies and the extra hero artwork;
   // if it fails the search result still carries enough to fill the basics.
-  const detail = (await rawgGet<RawgGame>(settings, `/games/${best.entry.id}`)) ?? best.entry
-  const shotResponse = await rawgGet<{ results?: { image: string }[] }>(
-    settings,
+  const detailOutcome = await rawgGet<RawgGame>(deps, `/games/${best.entry.id}`)
+  const detail = 'data' in detailOutcome ? detailOutcome.data : best.entry
+  const shotOutcome = await rawgGet<{ results?: { image: string }[] }>(
+    deps,
     `/games/${best.entry.id}/screenshots`,
     { page_size: '6' }
   )
+  const shots = 'data' in shotOutcome ? shotOutcome.data.results ?? [] : []
 
   const base = `rawg-${detail.id}`
   const backgroundSource = detail.background_image_additional || detail.background_image || ''
@@ -386,7 +531,7 @@ async function enrichFromRawg(deps: MetadataDeps, game: Game): Promise<MetadataR
   ])
 
   const screenshots: Screenshot[] = []
-  for (const [index, shot] of (shotResponse?.results ?? []).slice(0, 6).entries()) {
+  for (const [index, shot] of shots.slice(0, 6).entries()) {
     const local = await artFor(deps, shot.image, `${base}-shot-${index}`)
     screenshots.push({ thumb: shot.image, full: shot.image, local: local || undefined })
   }
@@ -408,19 +553,34 @@ async function enrichFromRawg(deps: MetadataDeps, game: Game): Promise<MetadataR
 
 const tokenCache = new Map<string, { token: string; expires: number }>()
 
-async function igdbToken(settings: AppSettings): Promise<string> {
+async function igdbToken(
+  deps: MetadataDeps
+): Promise<{ token: string } | { reason: MetadataFailureReason }> {
+  const { settings } = deps
   const key = `${settings.igdbClientId}:${settings.igdbClientSecret}`
   const cached = tokenCache.get(key)
-  if (cached && cached.expires > Date.now() + 60_000) return cached.token
+  if (cached && cached.expires > Date.now() + 60_000) return { token: cached.token }
   const url = new URL('https://id.twitch.tv/oauth2/token')
   url.searchParams.set('client_id', settings.igdbClientId)
   url.searchParams.set('client_secret', settings.igdbClientSecret)
   url.searchParams.set('grant_type', 'client_credentials')
-  const response = await fetch(url, { method: 'POST', signal: AbortSignal.timeout(15_000) })
-  if (!response.ok) throw new Error(`IGDB authentication failed (${response.status})`)
-  const json = (await response.json()) as { access_token: string; expires_in: number }
-  tokenCache.set(key, { token: json.access_token, expires: Date.now() + json.expires_in * 1000 })
-  return json.access_token
+  const outcome = await fetchJson<{ access_token: string; expires_in: number }>(deps, 'igdb', url, {
+    method: 'POST'
+  })
+  if ('reason' in outcome) {
+    // Twitch reports an invalid client as a 400, so anything that is not a
+    // transport or throttling problem here means the credentials were refused.
+    const reason =
+      outcome.reason === 'rate-limit' || outcome.reason === 'offline' || outcome.reason === 'budget'
+        ? outcome.reason
+        : 'auth'
+    return { reason }
+  }
+  tokenCache.set(key, {
+    token: outcome.data.access_token,
+    expires: Date.now() + outcome.data.expires_in * 1000
+  })
+  return { token: outcome.data.access_token }
 }
 
 interface IgdbGame {
@@ -464,19 +624,24 @@ async function enrichFromIgdb(deps: MetadataDeps, game: Game): Promise<MetadataR
       message: 'IGDB credentials are not configured. Add a client ID and secret in Settings.'
     }
   }
-  let token: string
-  try {
-    token = await igdbToken(settings)
-  } catch (error) {
-    return { ok: false, provider: 'igdb', confidence: 0, message: (error as Error).message }
+  const tokenized = await igdbToken(deps)
+  if ('reason' in tokenized) {
+    return {
+      ok: false,
+      provider: 'igdb',
+      confidence: 0,
+      reason: tokenized.reason,
+      message: failureMessage('igdb', tokenized.reason)
+    }
   }
+  const token = tokenized.token
 
   const query = `search "${game.title.replace(/["\\]/g, ' ')}";
     fields name,summary,first_release_date,rating,genres.name,cover.url,artworks.url,screenshots.url,
       involved_companies.developer,involved_companies.publisher,involved_companies.company.name,platforms.name;
     limit 6;`
   try {
-    const response = await fetch('https://api.igdb.com/v4/games', {
+    const outcome = await fetchJson<IgdbGame[]>(deps, 'igdb', 'https://api.igdb.com/v4/games', {
       method: 'POST',
       headers: {
         'Client-ID': settings.igdbClientId,
@@ -484,15 +649,26 @@ async function enrichFromIgdb(deps: MetadataDeps, game: Game): Promise<MetadataR
         Accept: 'application/json',
         'Content-Type': 'text/plain'
       },
-      body: query,
-      signal: AbortSignal.timeout(15_000)
+      body: query
     })
-    if (!response.ok) {
-      return { ok: false, provider: 'igdb', confidence: 0, message: `IGDB request failed (${response.status})` }
+    if ('reason' in outcome) {
+      return {
+        ok: false,
+        provider: 'igdb',
+        confidence: 0,
+        reason: outcome.reason,
+        message: failureMessage('igdb', outcome.reason)
+      }
     }
-    const results = (await response.json()) as IgdbGame[]
+    const results = outcome.data
     if (!results.length) {
-      return { ok: false, provider: 'igdb', confidence: 0, message: 'No IGDB match found for this title.' }
+      return {
+        ok: false,
+        provider: 'igdb',
+        confidence: 0,
+        reason: 'no-match',
+        message: failureMessage('igdb', 'no-match')
+      }
     }
     const best = results
       .map((entry) => ({ entry, score: titleScore(game.title, entry.name) }))
@@ -549,76 +725,92 @@ async function enrichFromIgdb(deps: MetadataDeps, game: Game): Promise<MetadataR
       candidates: artworkCandidates(updated)
     }
   } catch (error) {
-    return { ok: false, provider: 'igdb', confidence: 0, message: (error as Error).message }
+    return { ok: false, provider: 'igdb', confidence: 0, reason: 'offline', message: (error as Error).message }
   }
+}
+
+/**
+ * Ordered providers to try for a game: the preferred one first, then every
+ * other configured provider. Steam is always available because it needs no
+ * key; RAWG and IGDB join the chain only when their credentials are set, and a
+ * preference without credentials simply falls back to the natural order.
+ */
+export function providerChain(settings: AppSettings): MetadataProviderId[] {
+  const available: MetadataProviderId[] = ['steam']
+  if (settings.igdbClientId && settings.igdbClientSecret) available.push('igdb')
+  if (settings.rawgApiKey) available.push('rawg')
+  const preferred = available.find((provider) => provider === settings.metadataProvider)
+  return preferred ? [preferred, ...available.filter((provider) => provider !== preferred)] : available
+}
+
+/**
+ * Steam can only act on a title with a usable App ID. Steam imports and games
+ * with a numeric ID carry one; manually added or scanned PC titles ask the
+ * keyless store search, which is cached in the game's extras after the first
+ * hit. Returns null when Steam has nothing to work with, so the chain can move
+ * on without a misleading failure message.
+ */
+async function enrichFromSteamGame(deps: MetadataDeps, game: Game, force: boolean): Promise<MetadataResult | null> {
+  if (game.source === 'steam' || (/^\d+$/.test(game.sourceId) && game.source !== 'rom-scan')) {
+    return enrichFromSteam(deps, game, force)
+  }
+  const searchablePcTitle =
+    (game.source === 'manual' || game.source === 'pc-scan') &&
+    game.platformId === 'windows' &&
+    !/^\d+$/.test(game.sourceId)
+  if (!searchablePcTitle) return null
+
+  const cached = typeof game.extra.steamAppId === 'string' ? game.extra.steamAppId : ''
+  let appid = /^\d+$/.test(cached) ? cached : ''
+  if (!appid) {
+    const resolved = await searchSteamAppId(deps, game.title)
+    if ('reason' in resolved) {
+      return {
+        ok: false,
+        provider: 'steam',
+        confidence: 0,
+        reason: resolved.reason,
+        message: failureMessage('steam', resolved.reason)
+      }
+    }
+    appid = resolved.appid
+  }
+  return enrichFromSteam(deps, game, force, appid)
 }
 
 export async function enrichGame(deps: MetadataDeps, gameId: string, force = false): Promise<MetadataResult> {
   const game = getGame(deps.db, gameId)
   if (!game) throw new Error('Game not found')
 
-  // Honour the preferred provider, then fall back to any other provider whose
-  // credentials are configured, so a failed match still gets a second chance.
-  const igdbReady = Boolean(deps.settings.igdbClientId && deps.settings.igdbClientSecret)
-  const rawgReady = Boolean(deps.settings.rawgApiKey)
-
-  if (deps.settings.metadataProvider === 'rawg' && rawgReady) {
-    const rawg = await enrichFromRawg(deps, game)
-    if (rawg.ok) return rawg
-    if (game.source === 'steam' || (game.sourceId && /^\d+$/.test(game.sourceId) && game.source !== 'rom-scan')) {
-      const steam = await enrichFromSteam(deps, game, force)
-      if (steam.ok) return { ...steam, message: `${rawg.message} ${steam.message}`.trim() }
+  // Every provider sees the same game; the first success wins and earlier
+  // failures stay in the message so a fallback explains itself.
+  const failures: string[] = []
+  const reasons: MetadataFailureReason[] = []
+  for (const provider of providerChain(deps.settings)) {
+    const result =
+      provider === 'steam'
+        ? await enrichFromSteamGame(deps, game, force)
+        : provider === 'rawg'
+          ? await enrichFromRawg(deps, game)
+          : await enrichFromIgdb(deps, game)
+    if (!result) continue
+    if (result.ok) {
+      return failures.length ? { ...result, message: `${failures.join(' ')} ${result.message}`.trim() } : result
     }
-    if (igdbReady) {
-      const igdb = await enrichFromIgdb(deps, game)
-      return { ...igdb, message: `${rawg.message} ${igdb.message}`.trim() }
-    }
-    return rawg
+    failures.push(result.message)
+    if (result.reason) reasons.push(result.reason)
   }
 
-  if (deps.settings.metadataProvider === 'igdb' && igdbReady) {
-    const igdb = await enrichFromIgdb(deps, game)
-    if (igdb.ok) return igdb
-    if (game.sourceId && /^\d+$/.test(game.sourceId) && game.source !== 'rom-scan') {
-      const steam = await enrichFromSteam(deps, game, force)
-      return { ...steam, message: `${igdb.message} ${steam.message}`.trim() }
-    }
-    return igdb
-  }
-
-  if (game.source === 'steam' || (game.sourceId && /^\d+$/.test(game.sourceId) && game.source !== 'rom-scan')) {
-    const result = await enrichFromSteam(deps, game, force)
-    if (result.ok) return result
-    if (igdbReady) {
-      const igdb = await enrichFromIgdb(deps, game)
-      return { ...igdb, message: `${result.message} ${igdb.message}`.trim() }
-    }
-    if (rawgReady) {
-      const rawg = await enrichFromRawg(deps, game)
-      return { ...rawg, message: `${result.message} ${rawg.message}`.trim() }
-    }
-    return result
-  }
-
-  // Manually added PC titles (GOG, Epic, itch) carry no App ID. Resolve one
-  // through the keyless store search so Steam metadata can fill them too; a
-  // cached resolution from an earlier refresh avoids the extra request.
-  const searchablePcTitle =
-    (game.source === 'manual' || game.source === 'pc-scan') &&
-    game.platformId === 'windows' &&
-    !/^\d+$/.test(game.sourceId)
-  if (searchablePcTitle) {
-    const cached = typeof game.extra.steamAppId === 'string' ? game.extra.steamAppId : ''
-    const appid = /^\d+$/.test(cached) ? cached : await searchSteamAppId(game.title)
-    if (appid) {
-      const steam = await enrichFromSteam(deps, game, force, appid)
-      if (steam.ok || (!igdbReady && !rawgReady)) return steam
+  if (failures.length) {
+    const priority: MetadataFailureReason[] = ['auth', 'rate-limit', 'budget', 'offline', 'no-match']
+    return {
+      ok: false,
+      provider: 'none',
+      confidence: 0,
+      reason: priority.find((candidate) => reasons.includes(candidate)),
+      message: failures.join(' ')
     }
   }
-
-  if (igdbReady) return enrichFromIgdb(deps, game)
-  if (rawgReady) return enrichFromRawg(deps, game)
-
   return {
     ok: false,
     provider: 'none',
@@ -696,23 +888,70 @@ export async function setLocalArtwork(
   return updateGameRecord(deps.db, gameId, patch)
 }
 
-export async function refreshAll(deps: MetadataDeps): Promise<{ updated: number; failed: number }> {
+export interface RefreshOptions {
+  /** Caps the provider requests for this run; a fresh budget is created otherwise. */
+  budget?: RequestBudget
+}
+
+/**
+ * Refresh every game that looks incomplete, within a per-provider request
+ * budget. Results are grouped by failure reason so the UI can tell a missing
+ * match apart from a rejected key or a rate limit, and the run stops early
+ * instead of spending the last of a provider's allowance on retries.
+ */
+export async function refreshAll(deps: MetadataDeps, options: RefreshOptions = {}): Promise<MetadataRefreshSummary> {
+  const budget = options.budget ?? createRequestBudget()
+  const chain = providerChain(deps.settings)
   const rows = deps.db
     .prepare("SELECT id FROM games WHERE hidden = 0 AND (cover_path = '' OR cover_path NOT LIKE 'jf-art://%' OR metadata_confidence < 0.9) LIMIT 120")
     .all() as { id: string }[]
-  let updated = 0
-  let failed = 0
-  for (const row of rows) {
-    try {
-      const result = await enrichGame(deps, row.id, false)
-      if (result.ok) updated += 1
-      else failed += 1
-    } catch {
-      failed += 1
-    }
-    await new Promise((resolve) => setTimeout(resolve, 350))
+  const summary: MetadataRefreshSummary = {
+    updated: 0,
+    failed: 0,
+    skipped: 0,
+    noMatch: 0,
+    rateLimited: 0,
+    authFailed: 0,
+    offline: 0,
+    stopped: false
   }
-  return { updated, failed }
+  let processed = 0
+  for (const row of rows) {
+    if (budget.exhausted(chain)) {
+      summary.stopped = true
+      break
+    }
+    try {
+      const result = await enrichGame({ ...deps, budget }, row.id, false)
+      processed += 1
+      if (result.ok) {
+        summary.updated += 1
+      } else {
+        summary.failed += 1
+        switch (result.reason) {
+          case 'auth':
+            summary.authFailed += 1
+            break
+          case 'rate-limit':
+          case 'budget':
+            summary.rateLimited += 1
+            break
+          case 'offline':
+            summary.offline += 1
+            break
+          default:
+            summary.noMatch += 1
+        }
+      }
+    } catch {
+      processed += 1
+      summary.failed += 1
+      summary.offline += 1
+    }
+    await sleep(350)
+  }
+  summary.skipped = rows.length - processed
+  return summary
 }
 
 export { artUrlFor }

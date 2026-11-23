@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CheckCircle2, FolderOpen, Gamepad2, RefreshCw, Sparkles, AlertTriangle } from 'lucide-react'
 import type { SteamDetection } from '@shared/types'
 import { api, errorMessage } from '../../lib/api'
+import { describeRefresh } from '../../lib/refresh-summary'
 import { useStore } from '../../state/store'
 import { GameCard } from '../GameCard'
 import { Badge, Button, CheckLine, EmptyState, PageHeader, Spinner } from '../ui'
@@ -68,7 +69,8 @@ export function SteamView(): React.JSX.Element {
     try {
       const result = await api.metadata.refreshAll()
       await refresh()
-      notify(`Metadata refreshed for ${result.updated} games (${result.failed} unavailable).`, 'success')
+      const report = describeRefresh(result)
+      notify(report.message, report.tone)
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {

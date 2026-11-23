@@ -9,6 +9,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openDatabase } from '../src/main/services/db.ts'
@@ -17,8 +18,15 @@ import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
 import { buildHomeRows, createCollection, getStats, listCollections, listSections } from '../src/main/services/library.ts'
 import {
   bestSteamDescription,
+  createRequestBudget,
+  enrichGame,
+  failureMessage,
+  fetchJson,
+  providerChain,
   providerStatuses,
   rawgGamePatch,
+  reasonForStatus,
+  refreshAll,
   steamStoreMatch
 } from '../src/main/services/metadata.ts'
 import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
@@ -543,6 +551,117 @@ await check('Provider secrets are encrypted at rest and hidden from public setti
   updateSettings(db, { rawgApiKey: '', igdbClientSecret: '' })
   assert.equal(publicSettings(getSettings(db)).rawgKeyConfigured, false)
   assert.equal(publicSettings(getSettings(db)).igdbSecretConfigured, false)
+})
+
+await check('Provider chain puts the preference first and keeps every configured fallback', () => {
+  updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '', igdbClientId: '', igdbClientSecret: '' })
+  assert.deepEqual(providerChain(getSettings(db)), ['steam'])
+  updateSettings(db, { rawgApiKey: 'rawg-key' })
+  assert.deepEqual(providerChain(getSettings(db)), ['steam', 'rawg'])
+  updateSettings(db, { igdbClientId: 'id', igdbClientSecret: 'secret' })
+  assert.deepEqual(providerChain(getSettings(db)), ['steam', 'igdb', 'rawg'])
+  updateSettings(db, { metadataProvider: 'igdb' })
+  assert.deepEqual(providerChain(getSettings(db)), ['igdb', 'steam', 'rawg'])
+  updateSettings(db, { metadataProvider: 'rawg' })
+  assert.deepEqual(providerChain(getSettings(db)), ['rawg', 'steam', 'igdb'])
+  updateSettings(db, { metadataProvider: 'igdb', igdbClientId: '', igdbClientSecret: '' })
+  assert.deepEqual(providerChain(getSettings(db)), ['steam', 'rawg'], 'an unkeyed preference should not stall the chain')
+  updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '' })
+})
+
+await check('Metadata routing skips Steam for ROMs instead of asking for an App ID', async () => {
+  updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '', igdbClientId: '', igdbClientSecret: '' })
+  const rom = queryGames(db, {}, true).find((game) => game.source === 'rom-scan')
+  assert.ok(rom, 'no ROM game to route')
+  const result = await enrichGame(
+    { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false },
+    rom.id
+  )
+  assert.equal(result.ok, false)
+  assert.match(result.message, /RAWG or IGDB/)
+})
+
+await check('Metadata failures map to distinct reasons and messages', () => {
+  assert.equal(reasonForStatus(401), 'auth')
+  assert.equal(reasonForStatus(403), 'auth')
+  assert.equal(reasonForStatus(429), 'rate-limit')
+  assert.equal(reasonForStatus(503), 'rate-limit')
+  assert.equal(reasonForStatus(404), 'no-match')
+  assert.match(failureMessage('rawg', 'auth'), /credentials/)
+  assert.match(failureMessage('steam', 'rate-limit'), /rate-limited/)
+  assert.match(failureMessage('igdb', 'no-match'), /no match/)
+  assert.match(failureMessage('rawg', 'budget'), /budget/)
+})
+
+await check('Refresh budget caps requests and stops the run when spent', async () => {
+  updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '', igdbClientId: '', igdbClientSecret: '' })
+  const probe = createRequestBudget({ steam: 1, rawg: 0, igdb: 0 })
+  assert.equal(probe.take('steam'), true)
+  assert.equal(probe.take('steam'), false, 'budget allowed an extra request')
+  assert.equal(probe.remaining('steam'), 0)
+  assert.equal(probe.take('rawg'), false, 'a zero limit still allowed a request')
+  assert.equal(probe.exhausted(['steam']), true, 'a spent provider should exhaust a Steam-only run')
+  const mixed = createRequestBudget({ steam: 0 })
+  assert.equal(mixed.exhausted(['steam']), true)
+  assert.equal(mixed.exhausted(['steam', 'rawg']), false, 'RAWG still has allowance to spend')
+
+  const budget = createRequestBudget({ steam: 0, rawg: 0, igdb: 0 })
+  const summary = await refreshAll(
+    { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false },
+    { budget }
+  )
+  assert.equal(summary.updated, 0)
+  assert.equal(summary.stopped, true)
+  assert.ok(summary.skipped > 0, 'a spent budget processed games anyway')
+  assert.equal(summary.failed, 0)
+})
+
+await check('Provider requests back off after a rate limit and stop at the budget', async () => {
+  const hits: Record<string, number> = { rate: 0, auth: 0, budget: 0 }
+  const server = http.createServer((request, response) => {
+    const route = (request.url ?? '/').slice(1)
+    hits[route] = (hits[route] ?? 0) + 1
+    if (route === 'rate' && hits[route] === 1) {
+      response.writeHead(429, { 'retry-after': '1' })
+      response.end('')
+      return
+    }
+    if (route === 'auth') {
+      response.writeHead(401)
+      response.end('')
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end('{"items":[]}')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+  const port = (server.address() as { port: number }).port
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  try {
+    const started = Date.now()
+    const retried = await fetchJson<{ items: unknown[] }>(deps, 'steam', `http://127.0.0.1:${port}/rate`)
+    const waited = Date.now() - started
+    assert.ok('data' in retried, 'a rate limit was not retried')
+    assert.equal(hits.rate, 2, 'did not retry exactly once')
+    assert.ok(waited >= 900, `did not honour Retry-After (waited ${waited}ms)`)
+
+    const rejected = await fetchJson(deps, 'rawg', `http://127.0.0.1:${port}/auth`)
+    assert.ok('reason' in rejected)
+    assert.equal(rejected.reason, 'auth')
+    assert.equal(hits.auth, 1, 'a rejected key was retried')
+
+    const budgeted = createRequestBudget({ steam: 0 })
+    const blocked = await fetchJson(
+      { ...deps, budget: budgeted },
+      'steam',
+      `http://127.0.0.1:${port}/budget`
+    )
+    assert.ok('reason' in blocked)
+    assert.equal(blocked.reason, 'budget')
+    assert.equal(hits.budget, 0, 'a spent budget still sent a request')
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
 })
 
 await check('Steam store search resolves a manual PC title to an App ID', () => {

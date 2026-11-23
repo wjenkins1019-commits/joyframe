@@ -348,13 +348,30 @@ export interface ArtworkCandidate {
   kind: 'cover' | 'background' | 'logo' | 'screenshot' | 'banner'
 }
 
+export type MetadataFailureReason = 'no-match' | 'rate-limit' | 'auth' | 'offline' | 'budget'
+
 export interface MetadataResult {
   ok: boolean
   provider: string
   confidence: number
   message: string
+  /** Set on failures so bulk refresh can report why a game was skipped. */
+  reason?: MetadataFailureReason
   game?: Partial<Game>
   candidates?: ArtworkCandidate[]
+}
+
+/** Outcome of "refresh all metadata", grouped by why games did not update. */
+export interface MetadataRefreshSummary {
+  updated: number
+  failed: number
+  skipped: number
+  noMatch: number
+  rateLimited: number
+  authFailed: number
+  offline: number
+  /** True when the request budget stopped the run before it reached every game. */
+  stopped: boolean
 }
 
 export interface ProviderStatus {
@@ -514,7 +531,7 @@ export interface JoyframeApi {
     setArtwork(gameId: string, kind: ArtworkCandidate['kind'], url: string): Promise<Game>
     pickLocalArtwork(gameId: string, kind: ArtworkCandidate['kind']): Promise<Game | null>
     setLocalFile(gameId: string, kind: ArtworkCandidate['kind'], filePath: string): Promise<Game>
-    refreshAll(): Promise<{ updated: number; failed: number }>
+    refreshAll(): Promise<MetadataRefreshSummary>
   }
   saves: {
     list(gameId: string): Promise<GameSave[]>
