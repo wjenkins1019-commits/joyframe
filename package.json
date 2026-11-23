@@ -23,7 +23,8 @@
     "verify:intro": "node scripts/verify-intro.mjs && node scripts/verify-intro-first-run.ts",
     "verify:intro-ui": "node scripts/verify-intro-ui.ts",
     "verify:intro-pad": "node scripts/verify-intro-pad.ts",
-    "verify:installed": "node scripts/verify-installed.mjs",
+    "verify:installed-build": "node scripts/verify-installed-build.mjs",
+    "verify:installed": "node scripts/verify-installed-build.mjs && node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
     "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad"
   },

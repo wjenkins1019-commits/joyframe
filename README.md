@@ -210,7 +210,9 @@ without activating the screen underneath, never paints in `off`, and plays exact
 the app each time to prove the choice persists and the next launch follows it; and `npm run verify:intro-pad` does
 the same reach-and-step by controller only. `npm run verify:installed` repeats the ident, skip and `off` checks
 against the machine-wide copy in `C:\Program Files\JOYFRAME` (point `JOYFRAME_EXE` elsewhere to override), which is
-the only check that looks at the installed payload rather than `release/win-unpacked`.
+the only check that looks at the installed payload rather than `release/win-unpacked`. It first runs
+`npm run verify:installed-build`, which compares the SHA-256 of the installed `resources/app.asar` with the one in
+`release/win-unpacked` and fails on any difference — a stale or partial install that the packaged checks cannot see.
 
 A DOM probe over the remote debugging port found 142 focusable navigation elements, 107 game cards and
 17 populated dashboard rows (Continue Playing through Recently Completed), with the hero fully rendered (Chrono Trigger,
@@ -267,7 +269,8 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:intro` | Boot dev Electron on a throwaway profile: auto-advance, key/click/controller skip, `off`, and a seen `first-run`; then the plays-once first-run probe |
 | `npm run verify:intro-ui` | Cycle the Startup intro dropdown through every mode with real clicks and keys, restarting after each and checking disk plus launch behaviour |
 | `npm run verify:intro-pad` | Reach and step the Startup intro dropdown with the pad alone, then restart to prove the choice persisted |
-| `npm run verify:installed` | Drive the machine-wide copy (`C:\Program Files\JOYFRAME`, override with `JOYFRAME_EXE`): ident, skip without click-through, `off` |
+| `npm run verify:installed-build` | Fail when `C:\Program Files\JOYFRAME` is not byte-for-byte the build in `release/win-unpacked` |
+| `npm run verify:installed` | Check that integrity, then drive the machine-wide copy (`JOYFRAME_EXE` overrides the exe): ident, skip without click-through, `off` |
 | `npm run check` | Typecheck, smoke, freshness guard, pad suite, then all three intro suites |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |

@@ -29,12 +29,6 @@ const send = (method: string, params: Record<string, unknown> = {}): Promise<Rec
   session!.call(method, params)
 const evaluate = (expression: string): Promise<any> => session!.evaluate(expression)
 
-async function connect(): Promise<void> {
-  const target = await findWindow(port)
-  if (!target) throw new Error('renderer did not expose a debugging target')
-  session = await createSession(target)
-}
-
 // Point JOYFRAME_EXE at an installed build to run this against it as well.
 const exe = process.env.JOYFRAME_EXE ?? 'node_modules/electron/dist/electron.exe'
 const appArgs = process.env.JOYFRAME_EXE ? [] : ['.']
@@ -43,7 +37,9 @@ async function launch(): Promise<void> {
   app = spawn(exe, [...appArgs, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'], {
     stdio: 'ignore'
   })
-  await connect()
+  const target = await findWindow(port)
+  if (!target) throw new Error('renderer did not expose a debugging target')
+  session = await createSession(target)
 }
 
 async function shutdown(): Promise<void> {
