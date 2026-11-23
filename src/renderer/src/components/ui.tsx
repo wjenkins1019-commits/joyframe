@@ -137,6 +137,7 @@ export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>): React.JSX.Element {
   return (
     <select
+      data-nav="1"
       className={cx(
         'h-10 w-full rounded-lg border border-white/10 bg-[#1b1e23] px-3 text-sm text-white',
         'focus:border-jf-red/70 focus:ring-2 focus:ring-jf-red/25 transition',

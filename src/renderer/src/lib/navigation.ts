@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from 'react'
+import { introPlaying, skipIntro } from './intro-gate'
 import { useStore } from '../state/store'
 
 type Direction = 'up' | 'down' | 'left' | 'right'
@@ -121,6 +122,23 @@ const LAYER_CHROME = '[data-jf-modal-close], [data-jf-layer-skip]'
 const isTextField = (el: Element | null): el is HTMLElement =>
   el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 
+const isSelect = (el: Element | null): el is HTMLSelectElement => el instanceof HTMLSelectElement
+
+/** Controls that own the keyboard while focused, so navigation must stand down. */
+const ownsKeyboard = (el: Element | null): el is HTMLElement => isTextField(el) || isSelect(el)
+
+/**
+ * A d-pad has no way to open a native select popup (a synthetic click will not
+ * do it), so left/right step the value directly. Dispatching `change` keeps
+ * the app's own onChange/commit path in charge of saving it.
+ */
+function stepOption(select: HTMLSelectElement, delta: number): void {
+  const next = Math.min(select.options.length - 1, Math.max(0, select.selectedIndex + delta))
+  if (next === select.selectedIndex) return
+  select.selectedIndex = next
+  select.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 export function setNavFocus(el: HTMLElement | null, instant = false): void {
   // A data attribute, not a class: React owns className and drops anything it
   // did not render on the next re-render, which silently erased the highlight
@@ -172,6 +190,12 @@ function moveFocus(direction: Direction, instant = false): void {
     restoreFocus()
     return
   }
+  // Horizontal is free on a dropdown, so it steps the value; vertical keeps
+  // moving between controls rather than trapping the highlight inside one.
+  if (isSelect(currentFocus) && (direction === 'left' || direction === 'right')) {
+    stepOption(currentFocus, direction === 'right' ? 1 : -1)
+    return
+  }
   const origin = currentFocus.getBoundingClientRect()
   const originCenter = { x: origin.left + origin.width / 2, y: origin.top + origin.height / 2 }
   const horizontal = direction === 'left' || direction === 'right'
@@ -185,7 +209,18 @@ function moveFocus(direction: Direction, instant = false): void {
     .filter((item) => item !== currentFocus)
     .map((item) => {
       const rect = item.getBoundingClientRect()
-      return { el: item, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      return {
+        el: item,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        // Whether the control's box covers the column we are moving down.
+        // Vertical moves use this instead of the center offset: a control
+        // spanning the column (a full-width dropdown or field) is the only
+        // sensible landing spot at that x, and charging it the offset between
+        // its center and the column would walk vertical navigation down one
+        // edge of a form and skip everything beside it entirely.
+        coversColumn: columnX >= rect.left && columnX <= rect.right
+      }
     })
   let best: { el: HTMLElement; score: number } | null = null
 
@@ -195,7 +230,12 @@ function moveFocus(direction: Direction, instant = false): void {
     const primary =
       direction === 'left' ? -dx : direction === 'right' ? dx : direction === 'up' ? -dy : dy
     if (primary < 6) continue
-    const score = primary + Math.abs(horizontal ? dy : dx) * 2.4
+    // Alignment is free only for a control that actually spans the column;
+    // anything off to the side still pays for its distance, so a wide element
+    // elsewhere on another screen can never pull vertical focus out of its
+    // column.
+    const cross = horizontal ? dy : c.coversColumn ? 0 : dx
+    const score = primary + Math.abs(cross) * 2.4
     if (!best || score < best.score) best = { el: c.el, score }
   }
   if (!best && !horizontal) {
@@ -228,6 +268,12 @@ function moveFocus(direction: Direction, instant = false): void {
  * the screen without focus.
  */
 function activateFocused(): void {
+  if (currentFocus && isSelect(currentFocus)) {
+    // A synthetic click cannot open the native list, but real focus lets the
+    // keyboard drive it; left/right stepping keeps working either way.
+    currentFocus.focus()
+    return
+  }
   if (currentFocus && document.contains(currentFocus)) currentFocus.click()
   else restoreFocus()
 }
@@ -240,10 +286,11 @@ function activateFocused(): void {
  * press rather than leaking through to the page underneath.
  */
 function onBack(): void {
-  // A pad B over a field drops the field first, so a half-typed name or note
-  // is never lost to a stray back press. Escape has already blurred it here.
+  // A back press over a form control drops the control first: a half-typed
+  // name or note is never lost, and a focused dropdown closes before the view
+  // changes. Escape has usually blurred it already by the time we get here.
   const active = document.activeElement
-  if (isTextField(active)) {
+  if (ownsKeyboard(active)) {
     active.blur()
     return
   }
@@ -377,16 +424,31 @@ export function useSpatialNavigation(): void {
     /** Pads whose current state has already been taken as the starting point. */
     const primedPads = new Set<number>()
     let pollTimer = 0
+    /** True until a pad press is seen; lets the first fresh press drop a field. */
+    let padWasIdle = true
 
     const handleKeyDown = (event: KeyboardEvent): void => {
+      // The startup intro takes the first key press and does nothing else with
+      // it, so skipping never also activates whatever is focused behind it.
+      if (introPlaying()) {
+        skipIntro()
+        return
+      }
       const target = event.target as HTMLElement | null
       const typing = isTextField(target)
+      // A focused dropdown owns its keys like a text field does: arrows change
+      // the selection and Enter commits it. Without this the spatial-nav
+      // handler swallowed every arrow, so selects could not be used by touch
+      // typists, pads or anyone without a mouse.
+      const dropdown = isSelect(target)
 
       if (event.key === 'Escape') {
-        if (typing) target.blur()
+        if (typing || dropdown) target.blur()
+        if (dropdown) return
         onBack()
         return
       }
+      if (dropdown) return
       if (event.key === 'Enter' && typing) return
       if (typing && !event.key.startsWith('Escape')) return
 
@@ -434,6 +496,35 @@ export function useSpatialNavigation(): void {
     const pollPad = (): void => {
       const pads = navigator.getGamepads ? navigator.getGamepads() : []
       const connected = Array.from(pads).filter((entry): entry is Gamepad => Boolean(entry && entry.connected))
+      const padLive = (entry: Gamepad): boolean =>
+        entry.buttons.some((button) => button.pressed) || entry.axes.some((axis) => Math.abs(axis) > PAD_ACTIVITY_DEADZONE)
+
+      // Any controller input dismisses the intro. Latching is reset instead of
+      // processed, and the next poll primes whatever is still held, so the same
+      // press cannot also navigate once the overlay is gone.
+      if (introPlaying()) {
+        if (connected.some(padLive)) skipIntro()
+        pressed.clear()
+        repeatAt.clear()
+        stickEngaged.clear()
+        primedPads.clear()
+        return
+      }
+      // A pad cannot type or open a native select list, so a focused field
+      // would leave the first press activating whatever sits behind it. Drop
+      // the field and consume that press instead.
+      const live = connected.some(padLive)
+      const editing = document.activeElement
+      if (ownsKeyboard(editing) && live && padWasIdle) {
+        editing.blur()
+        pressed.clear()
+        repeatAt.clear()
+        stickEngaged.clear()
+        primedPads.clear()
+        padWasIdle = false
+        return
+      }
+      padWasIdle = !live
       // Pin to the most recently active pad: any pad showing live input
       // (pressed button or deflected stick) claims the pin, so an idle
       // phantom slot — Steam/virtual pads reporting all zeros — can never
@@ -532,6 +623,19 @@ export function useSpatialNavigation(): void {
       }
       const trigger = (key: string, down: boolean, action: () => void): void => {
         if (down && !pressed.get(key)) {
+          // Checked on every rising edge, not just the first poll of activity:
+          // a control can gain focus while a stick is already held, and the
+          // highlight behind it must never fire instead.
+          const focused = document.activeElement
+          if (ownsKeyboard(focused)) {
+            focused.blur()
+            pressed.clear()
+            repeatAt.clear()
+            stickEngaged.clear()
+            primedPads.clear()
+            pressed.set(key, true)
+            return
+          }
           record(key)
           action()
         }
