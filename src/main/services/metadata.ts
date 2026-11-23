@@ -99,6 +99,20 @@ function retryDelay(response: Response): number {
 type FetchOutcome<T> = { data: T } | { reason: MetadataFailureReason }
 
 /**
+ * Test-only fault injection. Setting JOYFRAME_FAULT_METADATA to an HTTP status
+ * (429 or 500, any 4xx/5xx) makes every metadata request fail with that status
+ * before it reaches the network, so the packaged app can be driven into the
+ * rate-limit and server-error paths that real providers only produce by chance.
+ * It is read per request and is inert when unset.
+ */
+export function injectedFaultStatus(): number {
+  const raw = process.env.JOYFRAME_FAULT_METADATA
+  if (!raw) return 0
+  const status = Number(raw)
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 0
+}
+
+/**
  * One provider request that respects the run's request budget, retries once
  * after a rate limit or server error (honouring Retry-After), and reports why
  * it failed so a bulk refresh can tell a rejected key, throttling and a plain
@@ -110,6 +124,8 @@ export async function fetchJson<T>(
   url: string | URL,
   init: RequestInit = {}
 ): Promise<FetchOutcome<T>> {
+  const injected = injectedFaultStatus()
+  if (injected) return { reason: reasonForStatus(injected) }
   let reason: MetadataFailureReason = 'offline'
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (deps.budget && !deps.budget.take(provider)) return { reason: 'budget' }

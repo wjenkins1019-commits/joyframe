@@ -172,7 +172,7 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 ## Verification performed
 
-`npm run smoke` executes **27 checks against the real services** and passes:
+`npm run smoke` executes **43 checks against the real services** and passes:
 
 - PC folder scan importing one game per folder, filtering installers/redistributables/crash handlers, choosing the
   executable that matches the folder, and skipping duplicates on rescan.
@@ -219,6 +219,11 @@ against the machine-wide copy in `C:\Program Files\JOYFRAME` (point `JOYFRAME_EX
 the only check that looks at the installed payload rather than `release/win-unpacked`. It first runs
 `npm run verify:installed-build`, which compares the SHA-256 of the installed `resources/app.asar` with the one in
 `release/win-unpacked` and fails on any difference — a stale or partial install that the packaged checks cannot see.
+
+Metadata failures can also be forced in a running build: launch it with `JOYFRAME_FAULT_METADATA=429` (or `500`, any
+4xx/5xx) and every provider request fails with that status before reaching the network, so the rate-limit and
+server-error toasts are reproducible on demand. The variable is read per request and inert when unset; smoke covers it
+as the test-only hook it is.
 
 A DOM probe over the remote debugging port found 142 focusable navigation elements, 107 game cards and
 17 populated dashboard rows (Continue Playing through Recently Completed), with the hero fully rendered (Chrono Trigger,

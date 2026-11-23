@@ -22,6 +22,7 @@ import {
   enrichGame,
   failureMessage,
   fetchJson,
+  injectedFaultStatus,
   providerChain,
   rawgGamePatch,
   reasonForStatus,
@@ -648,6 +649,31 @@ await check('Provider requests back off after a rate limit and stop at the budge
     assert.equal(hits.budget, 0, 'a spent budget still sent a request')
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+await check('Test-only fault injection reports rate limits and server errors', async () => {
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  const unreachable = 'http://127.0.0.1:1/never'
+  const previous = process.env.JOYFRAME_FAULT_METADATA
+  assert.equal(injectedFaultStatus(), 0, 'fault injection was active without the env var')
+  try {
+    process.env.JOYFRAME_FAULT_METADATA = '429'
+    assert.equal(injectedFaultStatus(), 429)
+    const limited = await fetchJson(deps, 'steam', unreachable)
+    assert.ok('reason' in limited)
+    assert.equal(limited.reason, 'rate-limit')
+
+    process.env.JOYFRAME_FAULT_METADATA = '500'
+    const served = await fetchJson(deps, 'rawg', unreachable)
+    assert.ok('reason' in served)
+    assert.equal(served.reason, 'server')
+
+    process.env.JOYFRAME_FAULT_METADATA = 'nonsense'
+    assert.equal(injectedFaultStatus(), 0, 'an invalid fault status should be inert')
+  } finally {
+    if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
+    else process.env.JOYFRAME_FAULT_METADATA = previous
   }
 })
 
