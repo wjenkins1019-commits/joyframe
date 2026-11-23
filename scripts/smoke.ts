@@ -32,7 +32,7 @@ import {
   refreshAll,
   steamStoreMatch
 } from '../src/main/services/metadata.ts'
-import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
+import { insertGame, queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
 import { scanPcFolders, scanRomFolders } from '../src/main/services/scanner.ts'
@@ -723,6 +723,51 @@ await check('Test-only fault injection reports every refresh failure path', asyn
   } finally {
     if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
     else process.env.JOYFRAME_FAULT_METADATA = previous
+  }
+})
+
+await check('A refresh that runs out of budget partway skips the games it never reached', async () => {
+  // A dedicated Steam-only profile: every candidate spends exactly one request,
+  // so the stopping point is fixed by the allowance instead of library order.
+  const budgetDb = openDatabase(path.join(root, 'budget.db'))
+  const previous = process.env.JOYFRAME_FAULT_METADATA
+  const allowance = 3
+  const total = 5
+  try {
+    for (let index = 0; index < total; index += 1) {
+      insertGame(budgetDb, {
+        title: `Budget Probe ${index + 1}`,
+        source: 'steam',
+        sourceId: String(1_000_000 + index),
+        platformId: 'windows',
+        coverPath: '',
+        metadataConfidence: 0
+      })
+    }
+    process.env.JOYFRAME_FAULT_METADATA = 'budget'
+    const started = Date.now()
+    const summary = await refreshAll(
+      { db: budgetDb, settings: getSettings(budgetDb), artworkDir: path.join(root, 'artwork'), cacheArtwork: false },
+      { budget: createRequestBudget({ steam: allowance }) }
+    )
+    assert.ok(Date.now() - started < 1000, 'a faulted budget still waited on the network')
+    assert.equal(summary.updated, 0)
+    assert.equal(summary.failed, allowance, 'the run should process several games before the budget runs out')
+    assert.equal(summary.budget, allowance, 'every processed game should report the spent budget')
+    assert.equal(summary.rateLimited, 0, 'a spent budget was reported as a rate limit')
+    assert.equal(summary.skipped, total - allowance, 'skipped should count the games the run never reached')
+
+    const report = describeRefresh(summary)
+    assert.equal(
+      report.message,
+      "Updated 0 of 3 games. 3 used up this run's request budget — refresh again later. " +
+        '2 skipped after the budget ran out.'
+    )
+    assert.equal(report.tone, 'error')
+  } finally {
+    if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
+    else process.env.JOYFRAME_FAULT_METADATA = previous
+    budgetDb.close()
   }
 })
 

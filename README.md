@@ -172,7 +172,7 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 ## Verification performed
 
-`npm run smoke` executes **44 checks against the real services** and passes:
+`npm run smoke` executes **45 checks against the real services** and passes:
 
 - PC folder scan importing one game per folder, filtering installers/redistributables/crash handlers, choosing the
   executable that matches the folder, and skipping duplicates on rescan.
@@ -188,6 +188,9 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 - Settings persistence, provider status, consistent SQLite backups, and data surviving a database reopen.
 - Refresh-summary wording for every outcome (combined failure sentences, a plain no-match staying informational, an
   error outranking it, and nothing attempted), checked purely offline against `describeRefresh`.
+- A **real bulk refresh** on its own Steam-only profile: a three-request allowance processes three games, stops, and
+  the toast reads `Updated 0 of 3 games. 3 used up this run's request budget — refresh again later. 2 skipped after
+  the budget ran out.` — so the skipped count comes from the run, not a hand-built summary.
 - A **1.0.0 profile upgrade**: `scripts/fixtures/schema-1.0.0.sql` is the exact schema the shipped build created,
   a database is built from it and filled like a used library, then opened with the current code — the library,
   launch methods, saves, collections, home rows and settings all load, and every column the current schema expects is
