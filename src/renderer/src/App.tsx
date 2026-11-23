@@ -16,7 +16,9 @@ import { ConsoleMode } from './components/ConsoleMode'
 import { ConsoleTransition } from './components/ConsoleTransition'
 import { GameDetail } from './components/GameDetail'
 import { GameEditor } from './components/GameEditor'
+import { IntroSplash } from './components/IntroSplash'
 import { ScanPanel } from './components/ScanPanel'
+import { LaunchNoticeCard } from './components/LaunchNoticeCard'
 import { ControllerBar, Toasts } from './components/Chrome'
 import { Button, cx } from './components/ui'
 import { useSpatialNavigation } from './lib/navigation'
@@ -64,7 +66,7 @@ function ErrorScreen(): React.JSX.Element {
   )
 }
 
-export default function App(): React.JSX.Element {
+function AppShell(): React.JSX.Element {
   const ready = useStore((state) => state.ready)
   const loading = useStore((state) => state.loading)
   const error = useStore((state) => state.error)
@@ -77,6 +79,7 @@ export default function App(): React.JSX.Element {
   const [consolePulse, setConsolePulse] = useState(false)
   const bootstrapped = useRef(false)
   const autoScanned = useRef(false)
+  const recoveryNoticeShown = useRef(false)
 
   useSpatialNavigation()
 
@@ -123,6 +126,17 @@ export default function App(): React.JSX.Element {
     if (!ready) return
     console.log(`[joyframe] UI ready — ${useStore.getState().games.length} games in library`)
   }, [ready])
+
+  // A game that survived a crash is adopted at startup and shows as running;
+  // say so once so its Stop button is an obvious offer rather than a surprise.
+  useEffect(() => {
+    if (!ready || recoveryNoticeShown.current) return
+    const state = useStore.getState().playState
+    if (!state.recovered || !state.gameId) return
+    recoveryNoticeShown.current = true
+    const title = useStore.getState().games.find((game) => game.id === state.gameId)?.title ?? 'A game'
+    notify(`${title} is still running from your last session. Stop it before launching another game.`, 'info')
+  }, [ready, notify])
 
   // Back / view-cycle / console events from the controller hook.
   useEffect(() => {
@@ -215,6 +229,7 @@ export default function App(): React.JSX.Element {
       {consoleMode && <ConsoleMode />}
 
       <GameDetail />
+      <LaunchNoticeCard />
       <ControllerBar />
       <Toasts />
 
@@ -222,5 +237,15 @@ export default function App(): React.JSX.Element {
       <ScanPanel open={scanOpen} onClose={() => setScanOpen(false)} />
 
     </div>
+  )
+}
+
+/** Startup ident sits above whichever screen the shell is showing. */
+export default function App(): React.JSX.Element {
+  return (
+    <>
+      <AppShell />
+      <IntroSplash />
+    </>
   )
 }

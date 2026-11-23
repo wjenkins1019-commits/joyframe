@@ -3,6 +3,7 @@ import { EyeOff, FolderOpen, Heart, Image as ImageIcon, Layers, Pencil, Play, Re
 import type { ArtworkCandidate, GameSave } from '@shared/types'
 import type { MethodForm, ProfileState } from './GameDetailCards'
 import { api, errorMessage } from '../lib/api'
+import { useCountdown } from '../lib/countdown'
 import { starsFor } from '../lib/format'
 import { useFocusReturn } from '../lib/navigation'
 import { useStore } from '../state/store'
@@ -45,6 +46,7 @@ export function GameDetail(): React.JSX.Element | null {
   const [profileSaved, setProfileSaved] = useState(false)
   const [candidates, setCandidates] = useState<ArtworkCandidate[]>([])
   const detailRef = useFocusReturn()
+  const launchRemaining = useCountdown(playState.state === 'launching' ? playState.observeUntil : null)
 
   const game = games.find((entry) => entry.id === detailId) ?? null
 
@@ -81,7 +83,8 @@ export function GameDetail(): React.JSX.Element | null {
 
   if (!game) return null
 
-  const running = playState.gameId === game.id && playState.state !== 'idle'
+  const launching = playState.gameId === game.id && playState.state === 'launching'
+  const running = playState.gameId === game.id && playState.state === 'running'
   const isResume = lastPlayed?.id === game.id
   // The refresh interval in Settings is honoured as a staleness threshold:
   // metadata older than the interval gets a visible reminder with one-click refresh.
@@ -295,6 +298,16 @@ export function GameDetail(): React.JSX.Element | null {
 
               <div className="min-w-0 flex-1">
                 <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                  {launching && (
+                    <Badge tone="amber" className="gap-1.5">
+                      <Spinner className="h-2.5 w-2.5" /> Launching
+                      {launchRemaining !== null && (
+                        <span className="font-mono text-[10px] normal-case tracking-normal opacity-80">
+                          {launchRemaining}s
+                        </span>
+                      )}
+                    </Badge>
+                  )}
                   {running && <Badge tone="red">Running now</Badge>}
                   {isResume && <Badge tone="red">Continue playing</Badge>}
                   {game.installed ? <Badge tone="green">Installed</Badge> : <Badge>Not installed</Badge>}
@@ -326,18 +339,20 @@ export function GameDetail(): React.JSX.Element | null {
                     size="lg"
                     icon={<Play className="h-4.5 w-4.5 fill-current" />}
                     onClick={() => void play(game.id)}
-                    disabled={running}
+                    disabled={launching || running}
                   >
                     {isResume ? 'Resume' : 'Play'}
                   </GlassButton>
                   <GlassButton
                     tone="stop"
                     size="lg"
-                    icon={<Square className="h-3.5 w-3.5 fill-current" />}
+                    icon={
+                      launching ? <X className="h-4 w-4" /> : <Square className="h-3.5 w-3.5 fill-current" />
+                    }
                     onClick={() => void stopGame()}
-                    disabled={!running}
+                    disabled={!launching && !running}
                   >
-                    Stop
+                    {launching ? 'Cancel launch' : 'Stop'}
                   </GlassButton>
                   <Button
                     size="lg"

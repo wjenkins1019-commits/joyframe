@@ -5,7 +5,7 @@ import { formatPlaytime, relativeTime, starsFor } from '../lib/format'
 import { useStore } from '../state/store'
 import { Cover } from './Art'
 import { StreamVideo } from './VideoPlayer'
-import { cx } from './ui'
+import { cx, Spinner } from './ui'
 
 export function GameCard({
   game,
@@ -29,7 +29,8 @@ export function GameCard({
   const timer = useRef<number | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
-  const running = playState.gameId === game.id && playState.state !== 'idle'
+  const launching = playState.gameId === game.id && playState.state === 'launching'
+  const running = playState.gameId === game.id && playState.state === 'running'
   const stars = starsFor(game.rating)
 
   useEffect(() => {
@@ -77,7 +78,7 @@ export function GameCard({
           hovered
             ? 'border-white/25 shadow-[0_26px_50px_-22px_rgba(0,0,0,0.95)] -translate-y-1'
             : 'border-white/8 shadow-[0_12px_28px_-18px_rgba(0,0,0,0.9)]',
-          running && 'ring-2 ring-jf-red/70'
+          (launching || running) && 'ring-2 ring-jf-red/70'
         )}
         style={{ aspectRatio: '2 / 3' }}
       >
@@ -99,8 +100,19 @@ export function GameCard({
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/0 to-black/25 opacity-90" />
 
         <div className="absolute left-2 top-2 flex flex-col gap-1">
+          {launching && (
+            <span
+              data-launch-state="launching"
+              className="flex items-center gap-1 rounded bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-black"
+            >
+              <Spinner className="h-2.5 w-2.5" /> Launching
+            </span>
+          )}
           {running && (
-            <span className="flex items-center gap-1 rounded bg-jf-red px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+            <span
+              data-launch-state="running"
+              className="flex items-center gap-1 rounded bg-jf-red px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white"
+            >
               <Play className="h-2.5 w-2.5 fill-current" /> Running
             </span>
           )}

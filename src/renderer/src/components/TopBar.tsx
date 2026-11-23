@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { FolderSearch, Plus, Search, Square, X } from 'lucide-react'
+import { useCountdown } from '../lib/countdown'
 import { useStore } from '../state/store'
-import { cx, IconButton } from './ui'
+import { cx, IconButton, Spinner } from './ui'
 
 function useElapsed(startedAt: string | null): string {
   const [, force] = useState(0)
@@ -37,6 +38,7 @@ export function TopBar({
   const platform = useStore((state) => state.info.platform)
   const inputRef = useRef<HTMLInputElement>(null)
   const elapsed = useElapsed(playState.startedAt)
+  const launchRemaining = useCountdown(playState.state === 'launching' ? playState.observeUntil : null)
 
   const runningGame = games.find((game) => game.id === playState.gameId)
 
@@ -75,15 +77,38 @@ export function TopBar({
 
       <div className="no-drag ml-auto flex items-center gap-2">
         {playState.state !== 'idle' && runningGame && (
-          <div className="flex items-center gap-2.5 rounded-full border border-jf-red/35 bg-jf-red/12 py-1 pl-3 pr-1">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inset-0 animate-ping rounded-full bg-jf-red/70" />
-              <span className="relative h-2 w-2 rounded-full bg-jf-red" />
-            </span>
+          <div
+            data-launch-state={playState.state}
+            className={cx(
+              'flex items-center gap-2.5 rounded-full border py-1 pl-3 pr-1',
+              playState.state === 'launching' ? 'border-amber-400/35 bg-amber-400/12' : 'border-jf-red/35 bg-jf-red/12'
+            )}
+          >
+            {playState.state === 'launching' ? (
+              <Spinner className="h-3.5 w-3.5 text-amber-300" />
+            ) : (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inset-0 animate-ping rounded-full bg-jf-red/70" />
+                <span className="relative h-2 w-2 rounded-full bg-jf-red" />
+              </span>
+            )}
+            {playState.state === 'launching' && (
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300/90">Launching</span>
+            )}
             <span className="max-w-[180px] truncate text-xs font-semibold text-white">{runningGame.title}</span>
-            <span className="font-mono text-[11px] text-white/60">{elapsed}</span>
-            <IconButton label="Stop game" size="sm" onClick={() => void stopGame()}>
-              <Square className="h-3 w-3" />
+            {playState.state === 'launching' ? (
+              <span className="font-mono text-[11px] text-white/45">
+                {launchRemaining === null ? 'waiting for the game' : `${launchRemaining}s left`}
+              </span>
+            ) : (
+              <span className="font-mono text-[11px] text-white/60">{elapsed}</span>
+            )}
+            <IconButton
+              label={playState.state === 'launching' ? 'Cancel launch' : 'Stop game'}
+              size="sm"
+              onClick={() => void stopGame()}
+            >
+              {playState.state === 'launching' ? <X className="h-3 w-3" /> : <Square className="h-3 w-3" />}
             </IconButton>
           </div>
         )}

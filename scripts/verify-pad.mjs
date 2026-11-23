@@ -411,14 +411,33 @@ async function main() {
   const injected = await call('Page.addScriptToEvaluateOnNewDocument', { source: LATCHED_START_PAD })
   const injectedId = injected.result?.identifier
   const readyExpression = `Boolean(document.querySelector('button[aria-label="Settings"]'))`
+  // The startup ident owns the first input; let it finish before driving the
+  // pad, exactly as a person would wait for the app to finish opening.
+  const settleIntro = async () => {
+    // The ident can start a frame after the shell is ready, so wait for it to
+    // appear before waiting for it to clear.
+    const deadline = Date.now() + 4000
+    let seen = false
+    while (Date.now() < deadline && !seen) {
+      try {
+        seen = await evaluate(`Boolean(document.querySelector('[data-jf-intro]'))`)
+      } catch {
+        seen = false
+      }
+      if (!seen) await delay(100)
+    }
+    await waitFor(`!document.querySelector('[data-jf-intro]')`, 12000)
+  }
   await call('Page.reload')
   await waitFor(readyExpression, 25000)
+  await settleIntro()
   await delay(1200)
   const latchedConsole = await evaluate(`Boolean(document.querySelector('[data-jf-console="1"]'))`)
   check('latched Start on the first pad poll stays on the desktop', !latchedConsole, `console=${latchedConsole}`)
   if (injectedId) await call('Page.removeScriptToEvaluateOnNewDocument', { identifier: injectedId })
   await call('Page.reload')
   await waitFor(readyExpression, 25000)
+  await settleIntro()
   await delay(800)
 
   await evaluate(FAKE_PAD)

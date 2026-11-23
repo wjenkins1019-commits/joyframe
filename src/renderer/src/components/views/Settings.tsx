@@ -327,6 +327,20 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             checked={draft.autoScanOnStartup}
             onChange={(value) => commit({ autoScanOnStartup: value })}
           />
+          <Field
+            className="py-2"
+            label="Startup intro"
+            hint="The animated JOYFRAME ident can play on every launch, only the first time this profile opens, or never. It can always be skipped with a click, key or controller button."
+          >
+            <Select
+              value={draft.introMode}
+              onChange={(event) => commit({ introMode: event.target.value as AppSettings['introMode'] })}
+            >
+              <option value="always">Every launch</option>
+              <option value="first-run">First run only</option>
+              <option value="off">Off</option>
+            </Select>
+          </Field>
           <div className="mt-3 flex gap-2">
             <Button
               size="sm"

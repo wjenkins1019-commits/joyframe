@@ -505,6 +505,136 @@ button {
   animation-delay: 90ms;
 }
 
+/* ---- Startup intro ------------------------------------------------------ */
+
+.jf-intro-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(215, 25, 53, 0.3), transparent 55%),
+    radial-gradient(circle at 50% 115%, rgba(215, 25, 53, 0.18), transparent 45%);
+  animation: jf-intro-glow 2600ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-glow {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  35% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.75;
+    transform: scale(1.06);
+  }
+}
+
+.jf-intro-mark {
+  animation: jf-intro-mark 900ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-mark {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) rotate(-8deg);
+    filter: blur(14px);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+    filter: blur(0);
+  }
+}
+
+.jf-intro-ring {
+  position: absolute;
+  inset: -28px;
+  border-radius: 34px;
+  border: 1px solid rgba(215, 25, 53, 0.55);
+  box-shadow: 0 0 70px rgba(215, 25, 53, 0.35);
+  animation: jf-intro-ring 1500ms 320ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-ring {
+  from {
+    opacity: 0.9;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+.jf-intro-word {
+  animation: jf-intro-word 820ms 380ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-word {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.jf-intro-tagline {
+  animation: jf-intro-tagline 700ms 760ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-tagline {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.jf-intro-bar {
+  animation: jf-fade-in 360ms 880ms var(--jf-ease) both;
+}
+
+.jf-intro-bar > span {
+  animation: jf-intro-load 1200ms 900ms var(--jf-ease) both;
+}
+
+@keyframes jf-intro-load {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.jf-intro-skip {
+  animation: jf-fade-in 500ms 1200ms var(--jf-ease) both;
+}
+
+.jf-intro-out {
+  animation: jf-intro-out 600ms ease-in both;
+}
+
+@keyframes jf-intro-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .reduce-motion *,
 .reduce-motion *::before,
 .reduce-motion *::after {

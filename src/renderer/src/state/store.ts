@@ -41,6 +41,7 @@ interface JoyframeState {
   playState: PlayState
   lastPlayed: Game | null
   providers: ProviderStatus[]
+  introPlayed: boolean
   view: ViewId
   detailId: string | null
   consoleMode: boolean
@@ -52,6 +53,7 @@ interface JoyframeState {
 
   init: () => Promise<void>
   refresh: () => Promise<void>
+  refreshSummary: () => Promise<void>
   setView: (view: ViewId) => void
   setSearch: (value: string) => void
   openDetail: (id: string) => void
@@ -64,6 +66,8 @@ interface JoyframeState {
   setController: (connected: boolean, name?: string, kind?: 'xbox' | 'playstation' | 'generic') => void
   play: (gameId: string) => Promise<void>
   stopGame: () => Promise<void>
+  retryLaunch: () => Promise<void>
+  dismissLaunchNotice: () => Promise<void>
   toggleFavorite: (gameId: string) => Promise<void>
   updateGame: (gameId: string, patch: Partial<Game>) => Promise<Game | null>
   setCompletion: (gameId: string, status: CompletionStatus) => Promise<void>
@@ -71,6 +75,19 @@ interface JoyframeState {
   removeGame: (gameId: string) => Promise<void>
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>
   refreshSections: (sections: HomeSection[]) => Promise<void>
+}
+
+function emptyPlayState(): PlayState {
+  return {
+    gameId: null,
+    state: 'idle',
+    startedAt: null,
+    pid: null,
+    tracked: false,
+    observing: false,
+    observeUntil: null,
+    notice: null
+  }
 }
 
 const emptyStats: StatsSummary = {
@@ -118,6 +135,7 @@ function applyPayload(set: (partial: Partial<JoyframeState>) => void, payload: I
     playState: payload.playState,
     lastPlayed: payload.lastPlayedGame,
     providers: payload.providers,
+    introPlayed: payload.introPlayed,
     ready: true,
     loading: false,
     error: null
@@ -137,9 +155,19 @@ export const useStore = create<JoyframeState>((set, get) => ({
   stats: emptyStats,
   home: [],
   info: emptyInfo,
-  playState: { gameId: null, state: 'idle', startedAt: null, pid: null, tracked: false },
+  playState: {
+    gameId: null,
+    state: 'idle',
+    startedAt: null,
+    pid: null,
+    tracked: false,
+    observing: false,
+    observeUntil: null,
+    notice: null
+  },
   lastPlayed: null,
   providers: [],
+  introPlayed: false,
   view: 'home',
   detailId: null,
   consoleMode: false,
@@ -167,6 +195,22 @@ export const useStore = create<JoyframeState>((set, get) => ({
     try {
       const payload = await api.init()
       applyPayload(set, payload)
+    } catch (error) {
+      get().notify(errorMessage(error), 'error')
+    }
+  },
+
+  // Per-game mutations only change one game plus the derived shelves and
+  // statistics. Rebuilding those is far cheaper than re-sending the library.
+  refreshSummary: async () => {
+    try {
+      const summary = await api.app.summary()
+      set({
+        collections: summary.collections,
+        stats: summary.stats,
+        home: summary.home,
+        lastPlayed: summary.lastPlayedGame
+      })
     } catch (error) {
       get().notify(errorMessage(error), 'error')
     }
@@ -200,11 +244,23 @@ export const useStore = create<JoyframeState>((set, get) => ({
       return
     }
     const wasConsole = get().consoleMode
-    set({ playState: { ...get().playState, gameId, state: 'launching' } })
+    set({
+      playState: {
+        ...get().playState,
+        gameId,
+        state: 'launching',
+        startedAt: new Date().toISOString(),
+        pid: null,
+        tracked: false,
+        observing: false,
+        observeUntil: null,
+        notice: null
+      }
+    })
     try {
       const result = await api.launch.game(gameId)
       if (!result.ok) {
-        set({ playState: { gameId: null, state: 'idle', startedAt: null, pid: null, tracked: false } })
+        set({ playState: emptyPlayState() })
         get().notify(result.message, 'error')
         return
       }
@@ -215,16 +271,51 @@ export const useStore = create<JoyframeState>((set, get) => ({
         window.setTimeout(() => undefined, 0)
       }
     } catch (error) {
-      set({ playState: { gameId: null, state: 'idle', startedAt: null, pid: null, tracked: false } })
+      set({ playState: emptyPlayState() })
       get().notify(errorMessage(error), 'error')
     }
   },
 
   stopGame: async () => {
     try {
+      const wasLaunching = get().playState.state === 'launching'
       await api.launch.stop()
-      get().notify('Game session ended.', 'info')
+      get().notify(wasLaunching ? 'Launch cancelled.' : 'Game session ended.', 'info')
       void get().refresh()
+    } catch (error) {
+      get().notify(errorMessage(error), 'error')
+    }
+  },
+
+  retryLaunch: async () => {
+    const notice = get().playState.notice
+    if (!notice) return
+    set({
+      playState: {
+        ...emptyPlayState(),
+        gameId: notice.gameId,
+        state: 'launching',
+        startedAt: new Date().toISOString()
+      }
+    })
+    try {
+      const result = await api.launch.retry()
+      if (!result.ok) {
+        await get().refresh()
+        get().notify(result.message, 'error')
+        return
+      }
+      get().notify(result.message, 'success')
+      void get().refresh()
+    } catch (error) {
+      await get().refresh()
+      get().notify(errorMessage(error), 'error')
+    }
+  },
+
+  dismissLaunchNotice: async () => {
+    try {
+      set({ playState: await api.launch.dismissNotice() })
     } catch (error) {
       get().notify(errorMessage(error), 'error')
     }
@@ -237,7 +328,7 @@ export const useStore = create<JoyframeState>((set, get) => ({
       const updated = await api.library.setFavorite(gameId, !game.favorite)
       set({ games: get().games.map((g) => (g.id === gameId ? updated : g)) })
       get().notify(updated.favorite ? `Added ${updated.title} to Favorites` : `Removed ${updated.title} from Favorites`)
-      void get().refresh()
+      void get().refreshSummary()
     } catch (error) {
       get().notify(errorMessage(error), 'error')
     }
@@ -246,7 +337,8 @@ export const useStore = create<JoyframeState>((set, get) => ({
   updateGame: async (gameId, patch) => {
     try {
       const updated = await api.library.update(gameId, patch)
-      await get().refresh()
+      set({ games: get().games.map((g) => (g.id === gameId ? updated : g)) })
+      await get().refreshSummary()
       return updated
     } catch (error) {
       get().notify(errorMessage(error), 'error')
@@ -256,8 +348,9 @@ export const useStore = create<JoyframeState>((set, get) => ({
 
   setCompletion: async (gameId, status) => {
     try {
-      await api.library.setCompletion(gameId, status)
-      await get().refresh()
+      const updated = await api.library.setCompletion(gameId, status)
+      set({ games: get().games.map((g) => (g.id === gameId ? updated : g)) })
+      await get().refreshSummary()
       get().notify(`Marked as ${status.replace('-', ' ')}`)
     } catch (error) {
       get().notify(errorMessage(error), 'error')
@@ -266,8 +359,9 @@ export const useStore = create<JoyframeState>((set, get) => ({
 
   addPlaytime: async (gameId, seconds) => {
     try {
-      await api.library.addPlaytime(gameId, seconds)
-      await get().refresh()
+      const updated = await api.library.addPlaytime(gameId, seconds)
+      set({ games: get().games.map((g) => (g.id === gameId ? updated : g)) })
+      await get().refreshSummary()
       get().notify(`Added ${Math.round(seconds / 60)} minutes of playtime`)
     } catch (error) {
       get().notify(errorMessage(error), 'error')
@@ -277,8 +371,8 @@ export const useStore = create<JoyframeState>((set, get) => ({
   removeGame: async (gameId) => {
     try {
       await api.library.remove(gameId)
-      set({ detailId: null })
-      await get().refresh()
+      set({ detailId: null, games: get().games.filter((g) => g.id !== gameId) })
+      await get().refreshSummary()
       get().notify('Game removed from the library. Files on disk were not touched.')
     } catch (error) {
       get().notify(errorMessage(error), 'error')

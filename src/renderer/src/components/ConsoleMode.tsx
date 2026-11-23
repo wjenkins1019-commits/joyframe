@@ -136,7 +136,8 @@ function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
   const openDetail = useStore((state) => state.openDetail)
   const lastPlayed = useStore((state) => state.lastPlayed)
   const isResume = lastPlayed?.id === game.id
-  const running = playState.gameId === game.id && playState.state !== 'idle'
+  const launching = playState.gameId === game.id && playState.state === 'launching'
+  const running = playState.gameId === game.id && playState.state === 'running'
 
   return (
     <section className="relative overflow-hidden rounded-2xl border border-white/10">
@@ -164,18 +165,18 @@ function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
               tone="play"
               icon={<Play className="h-4.5 w-4.5 fill-current" />}
               onClick={() => void play(game.id)}
-              disabled={running}
+              disabled={launching || running}
             >
               {isResume ? 'Resume' : 'Play'}
             </GlassButton>
             <GlassButton
               size="lg"
               tone="stop"
-              icon={<Square className="h-3.5 w-3.5 fill-current" />}
+              icon={launching ? <X className="h-4 w-4" /> : <Square className="h-3.5 w-3.5 fill-current" />}
               onClick={() => void stopGame()}
-              disabled={!running}
+              disabled={!launching && !running}
             >
-              Stop
+              {launching ? 'Cancel launch' : 'Stop'}
             </GlassButton>
             <Button size="lg" variant="secondary" onClick={() => openDetail(game.id)}>
               Details
@@ -217,7 +218,7 @@ export function ConsoleMode(): React.JSX.Element {
     streaming[heroIndex] ??
     (lastPlayed && (showHidden || !lastPlayed.hidden) ? lastPlayed : undefined) ??
     visible[0]
-  const running = games.find((game) => game.id === playState.gameId && playState.state !== 'idle')
+  const active = games.find((game) => game.id === playState.gameId && playState.state !== 'idle')
 
   const exit = (): void => {
     setConsoleMode(false)
@@ -245,10 +246,27 @@ export function ConsoleMode(): React.JSX.Element {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {running && (
-            <span className="flex items-center gap-2 rounded-full border border-jf-red/40 bg-jf-red/15 px-3 py-1 text-xs font-semibold text-white">
-              <span className="h-2 w-2 animate-pulse-soft rounded-full bg-jf-red" />
-              {running.title}
+          {active && (
+            <span
+              data-launch-state={playState.state}
+              className={cx(
+                'flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold text-white',
+                playState.state === 'launching'
+                  ? 'border-amber-400/40 bg-amber-400/15'
+                  : 'border-jf-red/40 bg-jf-red/15'
+              )}
+            >
+              {playState.state === 'launching' ? (
+                <>
+                  <span className="h-2 w-2 animate-pulse-soft rounded-full bg-amber-300" />
+                  Launching {active.title}…
+                </>
+              ) : (
+                <>
+                  <span className="h-2 w-2 animate-pulse-soft rounded-full bg-jf-red" />
+                  {active.title}
+                </>
+              )}
             </span>
           )}
           <button
