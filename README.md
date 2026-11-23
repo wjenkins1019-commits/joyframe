@@ -172,7 +172,7 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 ## Verification performed
 
-`npm run smoke` executes **43 checks against the real services** and passes:
+`npm run smoke` executes **44 checks against the real services** and passes:
 
 - PC folder scan importing one game per folder, filtering installers/redistributables/crash handlers, choosing the
   executable that matches the folder, and skipping duplicates on rescan.
@@ -186,6 +186,8 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 - A **real launch** of a spawned process through the launcher, returning to idle and persisting playtime, play count
   and last played.
 - Settings persistence, provider status, consistent SQLite backups, and data surviving a database reopen.
+- Refresh-summary wording for every outcome (combined failure sentences, a plain no-match staying informational, an
+  error outranking it, and nothing attempted), checked purely offline against `describeRefresh`.
 - A **1.0.0 profile upgrade**: `scripts/fixtures/schema-1.0.0.sql` is the exact schema the shipped build created,
   a database is built from it and filled like a used library, then opened with the current code — the library,
   launch methods, saves, collections, home rows and settings all load, and every column the current schema expects is
@@ -220,10 +222,12 @@ the only check that looks at the installed payload rather than `release/win-unpa
 `npm run verify:installed-build`, which compares the SHA-256 of the installed `resources/app.asar` with the one in
 `release/win-unpacked` and fails on any difference — a stale or partial install that the packaged checks cannot see.
 
-Metadata failures can also be forced in a running build: launch it with `JOYFRAME_FAULT_METADATA=429` (or `500`, any
-4xx/5xx) and every provider request fails with that status before reaching the network, so the rate-limit and
-server-error toasts are reproducible on demand. The variable is read per request and inert when unset; smoke covers it
-as the test-only hook it is.
+Metadata failures can also be forced in a running build: launch it with `JOYFRAME_FAULT_METADATA=401` (rejected
+credentials), `429` (rate limit), `500` (server error) or any 4xx/5xx, and every provider request fails with that status
+before reaching the network. `JOYFRAME_FAULT_METADATA=budget` instead spends one request per provider and then reports a
+spent budget, so a refresh stops mid-run with skipped games left over. Either way the corresponding toast is
+reproducible on demand: the variable is read per request and inert when unset or unrecognised, and smoke covers it as
+the test-only hook it is.
 
 A DOM probe over the remote debugging port found 142 focusable navigation elements, 107 game cards and
 17 populated dashboard rows (Continue Playing through Recently Completed), with the hero fully rendered (Chrono Trigger,

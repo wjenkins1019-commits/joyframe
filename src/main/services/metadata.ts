@@ -100,16 +100,34 @@ type FetchOutcome<T> = { data: T } | { reason: MetadataFailureReason }
 
 /**
  * Test-only fault injection. Setting JOYFRAME_FAULT_METADATA to an HTTP status
- * (429 or 500, any 4xx/5xx) makes every metadata request fail with that status
- * before it reaches the network, so the packaged app can be driven into the
- * rate-limit and server-error paths that real providers only produce by chance.
- * It is read per request and is inert when unset.
+ * (401 for rejected credentials, 429 for throttling, 500 for a server error, or
+ * any 4xx/5xx) makes every metadata request fail with that status before it
+ * reaches the network. The value `budget` instead spends one request per
+ * provider and then reports a spent budget, so a bulk refresh can be driven
+ * into the mid-run stop that real providers only reach by chance. The variable
+ * is read per request and is inert when unset or unrecognised.
  */
-export function injectedFaultStatus(): number {
+function injectedFault(): { status: number } | 'budget' | null {
   const raw = process.env.JOYFRAME_FAULT_METADATA
-  if (!raw) return 0
+  if (!raw) return null
+  if (raw.trim().toLowerCase() === 'budget') return 'budget'
   const status = Number(raw)
-  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 0
+  if (!Number.isInteger(status) || status < 400 || status > 599) return null
+  return { status }
+}
+
+/** The injected HTTP status, or 0 when the hook is off or set to `budget`. */
+export function injectedFaultStatus(): number {
+  const fault = injectedFault()
+  return typeof fault === 'object' && fault !== null ? fault.status : 0
+}
+
+/**
+ * Test-only: a faulted budget lets each provider spend one request, so a bulk
+ * refresh shows a processed failure, a spent-budget stop and skipped games.
+ */
+export function injectedBudgetLimits(): Partial<Record<MetadataProviderId, number>> {
+  return injectedFault() === 'budget' ? { steam: 1, rawg: 1, igdb: 1 } : {}
 }
 
 /**
@@ -124,8 +142,12 @@ export async function fetchJson<T>(
   url: string | URL,
   init: RequestInit = {}
 ): Promise<FetchOutcome<T>> {
-  const injected = injectedFaultStatus()
-  if (injected) return { reason: reasonForStatus(injected) }
+  const fault = injectedFault()
+  if (typeof fault === 'object' && fault !== null) return { reason: reasonForStatus(fault.status) }
+  if (fault === 'budget') {
+    deps.budget?.take(provider)
+    return { reason: 'budget' }
+  }
   let reason: MetadataFailureReason = 'offline'
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (deps.budget && !deps.budget.take(provider)) return { reason: 'budget' }
@@ -868,7 +890,7 @@ export async function refreshAll(
   deps: MetadataDeps,
   options: { /** Caps the provider requests for this run. */ budget?: RequestBudget } = {}
 ): Promise<MetadataRefreshSummary> {
-  const budget = options.budget ?? createRequestBudget()
+  const budget = options.budget ?? createRequestBudget(injectedBudgetLimits())
   const chain = providerChain(deps.settings)
   const rows = deps.db
     .prepare("SELECT id FROM games WHERE hidden = 0 AND (cover_path = '' OR cover_path NOT LIKE 'jf-art://%' OR metadata_confidence < 0.9) LIMIT 120")
@@ -879,6 +901,7 @@ export async function refreshAll(
     skipped: 0,
     noMatch: 0,
     rateLimited: 0,
+    budget: 0,
     authFailed: 0,
     offline: 0,
     serverErrors: 0
@@ -893,7 +916,8 @@ export async function refreshAll(
       } else {
         summary.failed += 1
         if (result.reason === 'auth') summary.authFailed += 1
-        else if (result.reason === 'rate-limit' || result.reason === 'budget') summary.rateLimited += 1
+        else if (result.reason === 'rate-limit') summary.rateLimited += 1
+        else if (result.reason === 'budget') summary.budget += 1
         else if (result.reason === 'server') summary.serverErrors += 1
         else if (result.reason === 'offline') summary.offline += 1
         else summary.noMatch += 1

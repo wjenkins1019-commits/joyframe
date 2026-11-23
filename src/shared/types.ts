@@ -367,7 +367,10 @@ export interface MetadataRefreshSummary {
   failed: number
   skipped: number
   noMatch: number
+  /** Providers throttled this run; waiting and retrying may help. */
   rateLimited: number
+  /** Games that hit a spent provider allowance, separate from a throttle. */
+  budget: number
   authFailed: number
   offline: number
   /** Provider reachable but answering 5xx. */

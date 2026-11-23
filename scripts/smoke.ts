@@ -14,6 +14,8 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openDatabase } from '../src/main/services/db.ts'
 import { addEmulator, testEmulator } from '../src/main/services/emulators.ts'
+import type { MetadataRefreshSummary } from '../src/shared/types.ts'
+import { describeRefresh } from '../src/renderer/src/lib/refresh-summary.ts'
 import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
 import { buildHomeRows, createCollection, getStats, listCollections, listSections } from '../src/main/services/library.ts'
 import {
@@ -22,6 +24,7 @@ import {
   enrichGame,
   failureMessage,
   fetchJson,
+  injectedBudgetLimits,
   injectedFaultStatus,
   providerChain,
   rawgGamePatch,
@@ -652,11 +655,12 @@ await check('Provider requests back off after a rate limit and stop at the budge
   }
 })
 
-await check('Test-only fault injection reports rate limits and server errors', async () => {
+await check('Test-only fault injection reports every refresh failure path', async () => {
   const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
   const unreachable = 'http://127.0.0.1:1/never'
   const previous = process.env.JOYFRAME_FAULT_METADATA
   assert.equal(injectedFaultStatus(), 0, 'fault injection was active without the env var')
+  assert.deepEqual(injectedBudgetLimits(), {}, 'a faulted budget was active without the env var')
   try {
     process.env.JOYFRAME_FAULT_METADATA = '429'
     assert.equal(injectedFaultStatus(), 429)
@@ -669,12 +673,138 @@ await check('Test-only fault injection reports rate limits and server errors', a
     assert.ok('reason' in served)
     assert.equal(served.reason, 'server')
 
+    process.env.JOYFRAME_FAULT_METADATA = '401'
+    const denied = await fetchJson(deps, 'rawg', unreachable)
+    assert.ok('reason' in denied)
+    assert.equal(denied.reason, 'auth', 'a rejected key did not report rejected credentials')
+
+    process.env.JOYFRAME_FAULT_METADATA = 'budget'
+    assert.equal(injectedFaultStatus(), 0, "'budget' is not an HTTP status")
+    assert.deepEqual(injectedBudgetLimits(), { steam: 1, rawg: 1, igdb: 1 })
+    const started = Date.now()
+    const spent = await fetchJson(deps, 'steam', unreachable)
+    assert.ok('reason' in spent)
+    assert.equal(spent.reason, 'budget')
+    assert.ok(Date.now() - started < 500, 'a faulted budget still waited on the network')
+
+    // Mid-run exhaustion: one visible game is attempted, then the run stops.
+    updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '', igdbClientId: '', igdbClientSecret: '' })
+    // Steam-actionable rows only, so the attempt really spends the faulted budget.
+    const rows = db
+      .prepare(
+        "SELECT id, cover_path, metadata_confidence FROM games WHERE hidden = 0 AND (source = 'steam' OR (source_id GLOB '[0-9]*' AND source <> 'rom-scan')) LIMIT 3"
+      )
+      .all() as { id: string; cover_path: string; metadata_confidence: number }[]
+    assert.ok(rows.length >= 2, 'need at least two visible Steam games for a mid-run budget stop')
+    try {
+      for (const row of rows) {
+        db.prepare("UPDATE games SET cover_path = '', metadata_confidence = 0 WHERE id = ?").run(row.id)
+      }
+      const summary = await refreshAll({ db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false })
+      assert.equal(summary.updated, 0)
+      assert.equal(summary.failed, 1, 'the faulted budget should attempt exactly one game')
+      assert.equal(summary.budget, 1, 'a spent budget was reported as something else')
+      assert.equal(summary.rateLimited, 0, 'a spent budget was reported as a rate limit')
+      assert.ok(summary.skipped >= 1, 'a mid-run budget stop left no skipped games')
+      assert.equal(summary.serverErrors, 0)
+    } finally {
+      for (const row of rows) {
+        db.prepare('UPDATE games SET cover_path = ?, metadata_confidence = ? WHERE id = ?').run(
+          row.cover_path,
+          row.metadata_confidence,
+          row.id
+        )
+      }
+    }
+
     process.env.JOYFRAME_FAULT_METADATA = 'nonsense'
-    assert.equal(injectedFaultStatus(), 0, 'an invalid fault status should be inert')
+    assert.equal(injectedFaultStatus(), 0, 'an invalid fault value should be inert')
+    assert.deepEqual(injectedBudgetLimits(), {}, 'an invalid fault value should not spend a budget')
   } finally {
     if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
     else process.env.JOYFRAME_FAULT_METADATA = previous
   }
+})
+
+await check('Refresh summaries word every outcome and pick the loudest tone', () => {
+  const summary = (fields: Partial<MetadataRefreshSummary> = {}): MetadataRefreshSummary => ({
+    updated: 0,
+    failed: 0,
+    skipped: 0,
+    noMatch: 0,
+    rateLimited: 0,
+    budget: 0,
+    authFailed: 0,
+    offline: 0,
+    serverErrors: 0,
+    ...fields
+  })
+
+  const nothing = describeRefresh(summary())
+  assert.equal(nothing.message, 'No games were refreshed.')
+  assert.equal(nothing.tone, 'success')
+
+  const clean = describeRefresh(summary({ updated: 3 }))
+  assert.equal(clean.message, 'Updated 3 of 3 games.')
+  assert.equal(clean.tone, 'success')
+
+  // Each sentence on its own, so a reworded one fails here rather than in a probe.
+  const auth = describeRefresh(summary({ failed: 1, authFailed: 1 }))
+  assert.equal(auth.message, 'Updated 0 of 1 games. 1 hit rejected credentials — check the API key in Settings.')
+  assert.equal(auth.tone, 'error')
+
+  const limited = describeRefresh(summary({ failed: 3, rateLimited: 3 }))
+  assert.equal(limited.message, 'Updated 0 of 3 games. 3 were rate-limited — try again later.')
+  assert.equal(limited.tone, 'error')
+
+  const budget = describeRefresh(summary({ failed: 2, budget: 2 }))
+  assert.equal(budget.message, "Updated 0 of 2 games. 2 used up this run's request budget — refresh again later.")
+  assert.equal(budget.tone, 'error')
+  assert.notEqual(budget.message, limited.message, 'a spent budget should not read as a rate limit')
+
+  const served = describeRefresh(summary({ failed: 1, serverErrors: 1 }))
+  assert.equal(served.message, 'Updated 0 of 1 games. 1 hit a provider server error — try again later.')
+  assert.equal(served.tone, 'error')
+
+  const offline = describeRefresh(summary({ failed: 2, offline: 2 }))
+  assert.equal(offline.message, 'Updated 0 of 2 games. 2 could not reach a provider.')
+  assert.equal(offline.tone, 'error')
+
+  const unmatchedOnly = describeRefresh(summary({ failed: 2, noMatch: 2 }))
+  assert.equal(unmatchedOnly.message, 'Updated 0 of 2 games. 2 had no match.')
+  assert.equal(unmatchedOnly.tone, 'info')
+
+  const unmatched = describeRefresh(summary({ updated: 1, failed: 2, noMatch: 2 }))
+  assert.equal(unmatched.message, 'Updated 1 of 3 games. 2 had no match.')
+  assert.equal(unmatched.tone, 'info', 'a plain no-match should not read as an error')
+
+  const combined = describeRefresh(
+    summary({
+      updated: 1,
+      failed: 5,
+      noMatch: 1,
+      authFailed: 1,
+      rateLimited: 1,
+      budget: 1,
+      serverErrors: 1,
+      offline: 1
+    })
+  )
+  assert.equal(
+    combined.message,
+    'Updated 1 of 6 games. 1 had no match. 1 hit rejected credentials — check the API key in Settings. ' +
+      '1 were rate-limited — try again later. 1 used up this run\'s request budget — refresh again later. ' +
+      '1 hit a provider server error — try again later. 1 could not reach a provider.'
+  )
+  assert.equal(combined.tone, 'error')
+
+  const skipped = describeRefresh(summary({ skipped: 4 }))
+  assert.equal(skipped.message, 'No games were refreshed. 4 skipped after the budget ran out.')
+  assert.equal(skipped.tone, 'error')
+
+  const errorBeatsInfo = describeRefresh(summary({ updated: 2, failed: 3, noMatch: 2, serverErrors: 1 }))
+  assert.equal(errorBeatsInfo.message, 'Updated 2 of 5 games. 2 had no match. 1 hit a provider server error — try again later.')
+  assert.equal(errorBeatsInfo.tone, 'error', 'an error should outrank a plain no-match')
 })
 
 await check('Steam store search resolves a manual PC title to an App ID', () => {
