@@ -221,6 +221,9 @@ against the machine-wide copy in `C:\Program Files\JOYFRAME` (point `JOYFRAME_EX
 the only check that looks at the installed payload rather than `release/win-unpacked`. It first runs
 `npm run verify:installed-build`, which compares the SHA-256 of the installed `resources/app.asar` with the one in
 `release/win-unpacked` and fails on any difference — a stale or partial install that the packaged checks cannot see.
+`npm run check:installed` runs `npm run check` and then `verify:installed-build` in one go, and is the final step
+after a release: rebuild, install, then that command, so the shipped copy is proven to be the verified build and not
+something from an earlier run.
 
 Metadata failures can also be forced in a running build: launch it with `JOYFRAME_FAULT_METADATA=401` (rejected
 credentials), `429` (rate limit), `500` (server error) or any 4xx/5xx, and every provider request fails with that status
@@ -289,5 +292,6 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:installed-build` | Fail when `C:\Program Files\JOYFRAME` is not byte-for-byte the build in `release/win-unpacked` |
 | `npm run verify:installed` | Check that integrity, then drive the machine-wide copy (`JOYFRAME_EXE` overrides the exe): ident, skip without click-through, `off` |
 | `npm run check` | Typecheck, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
+| `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` — the final step after a release |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |
