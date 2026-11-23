@@ -10,7 +10,8 @@ import { createBackup } from './services/backup.ts'
 import { openDatabase, type Db } from './services/db.ts'
 import { Launcher } from './services/launcher.ts'
 import { closeInterruptedSession, reconcileOpenSessions } from './services/sessions.ts'
-import { getSettings } from './services/settings.ts'
+import { getSettings, migrateSecrets } from './services/settings.ts'
+import { configureSecrets } from './services/secrets.ts'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -64,8 +65,10 @@ async function bootstrap(): Promise<void> {
 
   if (process.env.JOYFRAME_DEBUG) console.log(`[joyframe] userData: ${userData}`)
 
+  configureSecrets(path.join(userData, 'secrets.key'))
   const database = openDatabase(dbFile)
   db = database
+  migrateSecrets(database)
   settingsState = getSettings(database)
 
   launcher = new Launcher(database, {

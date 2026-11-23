@@ -25,7 +25,8 @@ import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
 import { scanPcFolders, scanRomFolders } from '../src/main/services/scanner.ts'
-import { getSettings, updateSettings } from '../src/main/services/settings.ts'
+import { getSettings, migrateSecrets, publicSettings, updateSettings } from '../src/main/services/settings.ts'
+import { configureSecrets } from '../src/main/services/secrets.ts'
 import { detectSteam, importSteamGames, parseVdf } from '../src/main/services/steam.ts'
 import { createBackup, isValidDatabase, listBackups } from '../src/main/services/backup.ts'
 import { seedLegacyProfile } from './seed-legacy.ts'
@@ -33,6 +34,7 @@ import { seedLegacyProfile } from './seed-legacy.ts'
 const root = path.join(process.cwd(), '.smoke')
 fs.rmSync(root, { recursive: true, force: true })
 fs.mkdirSync(root, { recursive: true })
+configureSecrets(path.join(root, 'secrets.key'))
 
 let passed = 0
 const failures: string[] = []
@@ -506,6 +508,41 @@ await check('Metadata provider status reflects configured credentials', () => {
   assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'igdb')?.enabled, true)
   assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'rawg')?.enabled, true)
   updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
+})
+
+await check('Provider secrets are encrypted at rest and hidden from public settings', () => {
+  updateSettings(db, { rawgApiKey: 'rawg-secret-value', igdbClientSecret: 'igdb-secret-value' })
+  const rows = db
+    .prepare("SELECT key, value FROM settings WHERE key IN ('rawgApiKey','igdbClientSecret')")
+    .all() as { key: string; value: string }[]
+  assert.equal(rows.length, 2)
+  for (const row of rows) {
+    assert.equal(row.value.includes('secret-value'), false, `${row.key} was stored in clear text`)
+    assert.match(row.value, /enc:v1:/)
+  }
+
+  const settings = getSettings(db)
+  assert.equal(settings.rawgApiKey, 'rawg-secret-value')
+  assert.equal(settings.igdbClientSecret, 'igdb-secret-value')
+  const publicView = publicSettings(settings)
+  assert.equal(publicView.rawgKeyConfigured, true)
+  assert.equal(publicView.igdbSecretConfigured, true)
+  assert.equal('rawgApiKey' in publicView, false, 'the RAWG key leaked into public settings')
+  assert.equal('igdbClientSecret' in publicView, false, 'the IGDB secret leaked into public settings')
+
+  // A profile written by an older build still has plaintext rows.
+  db.prepare("INSERT INTO settings (key, value) VALUES ('rawgApiKey', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+    JSON.stringify('legacy-plain-key')
+  )
+  migrateSecrets(db)
+  const migrated = db.prepare("SELECT value FROM settings WHERE key = 'rawgApiKey'").get() as { value: string }
+  assert.match(migrated.value, /enc:v1:/)
+  assert.equal(getSettings(db).rawgApiKey, 'legacy-plain-key')
+  assert.equal(getSettings(db).igdbClientSecret, 'igdb-secret-value')
+
+  updateSettings(db, { rawgApiKey: '', igdbClientSecret: '' })
+  assert.equal(publicSettings(getSettings(db)).rawgKeyConfigured, false)
+  assert.equal(publicSettings(getSettings(db)).igdbSecretConfigured, false)
 })
 
 await check('Steam store search resolves a manual PC title to an App ID', () => {
