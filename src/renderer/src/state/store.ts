@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import type {
   AppInfo,
-  AppSettings,
+  PublicSettings,
+  SettingsPatch,
   Collection,
   CompletionStatus,
   Emulator,
@@ -34,7 +35,7 @@ interface JoyframeState {
   collections: Collection[]
   sections: HomeSection[]
   emulators: Emulator[]
-  settings: AppSettings
+  settings: PublicSettings
   stats: StatsSummary
   home: HomeRow[]
   info: AppInfo
@@ -73,7 +74,7 @@ interface JoyframeState {
   setCompletion: (gameId: string, status: CompletionStatus) => Promise<void>
   addPlaytime: (gameId: string, seconds: number) => Promise<void>
   removeGame: (gameId: string) => Promise<void>
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>
+  updateSettings: (patch: SettingsPatch) => Promise<void>
   refreshSections: (sections: HomeSection[]) => Promise<void>
 }
 
@@ -117,7 +118,12 @@ const emptyInfo: AppInfo = {
   node: ''
 }
 
-const fallbackSettings: AppSettings = DEFAULT_SETTINGS
+const { rawgApiKey: _rawgApiKey, igdbClientSecret: _igdbClientSecret, ...publicDefaults } = DEFAULT_SETTINGS
+const fallbackSettings: PublicSettings = {
+  ...publicDefaults,
+  rawgKeyConfigured: false,
+  igdbSecretConfigured: false
+}
 
 let toastCounter = 0
 

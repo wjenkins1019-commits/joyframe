@@ -19,9 +19,10 @@ import {
   Sparkles,
   Tv
 } from 'lucide-react'
-import type { AppSettings, BackupInfo, DemoStatus, HomeSection } from '@shared/types'
+import type { BackupInfo, DemoStatus, HomeSection, PublicSettings, SettingsPatch } from '@shared/types'
 import { defaultRomOrder } from '@shared/rom-formats'
 import { api, errorMessage } from '../../lib/api'
+import { describeRefresh } from '../../lib/refresh-summary'
 import { useStore } from '../../state/store'
 import {
   Badge,
@@ -53,7 +54,9 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
   const refreshSections = useStore((state) => state.refreshSections)
   const refresh = useStore((state) => state.refresh)
   const [newSectionCollection, setNewSectionCollection] = useState('')
-  const [draft, setDraft] = useState<AppSettings>(settings)
+  const [draft, setDraft] = useState<PublicSettings>(settings)
+  const [rawgKeyDraft, setRawgKeyDraft] = useState('')
+  const [igdbSecretDraft, setIgdbSecretDraft] = useState('')
   const [backups, setBackups] = useState<BackupInfo[]>([])
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -77,13 +80,20 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
     void loadMaintenance()
   }, [])
 
-  const commit = (patch: Partial<AppSettings>): void => {
+  const commit = (patch: SettingsPatch): void => {
     setDraft((value) => ({ ...value, ...patch }))
     void updateSettings(patch)
   }
 
-  const commitText = (key: keyof AppSettings): void => {
-    if (draft[key] !== settings[key]) void updateSettings({ [key]: draft[key] } as Partial<AppSettings>)
+  const commitText = (key: keyof PublicSettings): void => {
+    if (draft[key] !== settings[key]) void updateSettings({ [key]: draft[key] } as SettingsPatch)
+  }
+
+  /** Secrets are write-only: send a new value, then forget it locally. */
+  const commitSecret = (key: 'rawgApiKey' | 'igdbClientSecret', value: string, reset: (next: string) => void): void => {
+    const trimmed = value.trim()
+    reset('')
+    if (trimmed) void updateSettings({ [key]: trimmed } as SettingsPatch)
   }
 
   const makeBackup = async (): Promise<void> => {
@@ -297,7 +307,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <Field label="Controller prompts">
               <Select
                 value={draft.controllerPrompts}
-                onChange={(event) => commit({ controllerPrompts: event.target.value as AppSettings['controllerPrompts'] })}
+                onChange={(event) => commit({ controllerPrompts: event.target.value as PublicSettings['controllerPrompts'] })}
               >
                 <option value="auto">Auto detect</option>
                 <option value="xbox">Xbox</option>
@@ -334,7 +344,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
           >
             <Select
               value={draft.introMode}
-              onChange={(event) => commit({ introMode: event.target.value as AppSettings['introMode'] })}
+              onChange={(event) => commit({ introMode: event.target.value as PublicSettings['introMode'] })}
             >
               <option value="always">Every launch</option>
               <option value="first-run">First run only</option>
@@ -473,10 +483,14 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <Field label="RAWG API key">
               <Input
                 type="password"
-                value={draft.rawgApiKey}
-                onChange={(event) => setDraft({ ...draft, rawgApiKey: event.target.value })}
-                onBlur={() => commitText('rawgApiKey')}
-                placeholder="Free key from rawg.io/apidocs"
+                value={rawgKeyDraft}
+                onChange={(event) => setRawgKeyDraft(event.target.value)}
+                onBlur={() => commitSecret('rawgApiKey', rawgKeyDraft, setRawgKeyDraft)}
+                placeholder={
+                  settings.rawgKeyConfigured
+                    ? 'Key stored — enter a new key to replace it'
+                    : 'Free key from rawg.io/apidocs'
+                }
               />
             </Field>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -491,13 +505,32 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               <Field label="IGDB client secret">
                 <Input
                   type="password"
-                  value={draft.igdbClientSecret}
-                  onChange={(event) => setDraft({ ...draft, igdbClientSecret: event.target.value })}
-                  onBlur={() => commitText('igdbClientSecret')}
-                  placeholder="Stored locally"
+                  value={igdbSecretDraft}
+                  onChange={(event) => setIgdbSecretDraft(event.target.value)}
+                  onBlur={() => commitSecret('igdbClientSecret', igdbSecretDraft, setIgdbSecretDraft)}
+                  placeholder={
+                    settings.igdbSecretConfigured ? 'Secret stored — enter a new one to replace it' : 'Stored locally'
+                  }
                 />
               </Field>
             </div>
+            {(settings.rawgKeyConfigured || settings.igdbSecretConfigured) && (
+              <div className="flex flex-wrap gap-2">
+                {settings.rawgKeyConfigured && (
+                  <Button size="sm" variant="ghost" onClick={() => void updateSettings({ rawgApiKey: '' })}>
+                    Clear RAWG key
+                  </Button>
+                )}
+                {settings.igdbSecretConfigured && (
+                  <Button size="sm" variant="ghost" onClick={() => void updateSettings({ igdbClientSecret: '' })}>
+                    Clear IGDB secret
+                  </Button>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] leading-relaxed text-white/30">
+              Saved keys are encrypted on this PC, never shown again, and stay out of the data sent to the interface.
+            </p>
             <div className="rounded-lg border border-white/8 bg-black/25 p-3 text-[11px] leading-relaxed text-jf-muted">
               <p className="font-semibold text-white/75">Provider notes</p>
               <p className="mt-1">
@@ -530,7 +563,8 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
                   setBusy('refreshAll')
                   try {
                     const result = await api.metadata.refreshAll()
-                    notify(`Refreshed ${result.updated} games (${result.failed} without matches).`, 'success')
+                    const report = describeRefresh(result)
+                    notify(report.message, report.tone)
                   } catch (error) {
                     notify(errorMessage(error), 'error')
                   } finally {

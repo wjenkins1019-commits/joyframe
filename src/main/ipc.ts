@@ -17,6 +17,7 @@ import type {
   LibrarySummary,
   ScanProgress,
   ScanResult,
+  SettingsPatch,
   SteamDetection
 } from '../shared/types.ts'
 import { createBackup, listBackups, restoreBackup } from './services/backup.ts'
@@ -51,7 +52,7 @@ import {
 import { getPlatforms, getGame, insertGame, nowIso, queryGames, uid, updateGameRecord, deleteGame } from './services/repo.ts'
 import { markSavesScanned, listSaves, removeSaveRecord, scanSaves, saveSummary } from './services/saves.ts'
 import { scanPcFolders, scanRomFolders } from './services/scanner.ts'
-import { getMeta, getSettings, setMeta, updateSettings } from './services/settings.ts'
+import { getMeta, getSettings, publicSettings, setMeta, updateSettings } from './services/settings.ts'
 import { detectSteam, importSteamGames, steamLaunchUrl } from './services/steam.ts'
 import { registerIpc } from './ipc-helpers.ts'
 
@@ -117,7 +118,7 @@ export function buildInitPayload(ctx: AppContext): InitPayload {
     collections,
     sections: listSections(ctx.db),
     emulators: listEmulators(ctx.db),
-    settings,
+    settings: publicSettings(settings),
     stats: getStats(ctx.db, games),
     home: buildHomeRows(ctx.db, settings.showHidden, visibleGames(games, settings.showHidden), collections),
     info: ctx.info,
@@ -352,11 +353,11 @@ export function createHandlers(ctx: AppContext) {
     },
     'saves:remove': (id: string) => removeSaveRecord(ctx.db, id),
 
-    'settings:get': () => getSettings(ctx.db),
-    'settings:update': (patch: Partial<AppSettings>) => {
+    'settings:get': () => publicSettings(getSettings(ctx.db)),
+    'settings:update': (patch: SettingsPatch) => {
       const next = updateSettings(ctx.db, patch)
       ctx.setSettings(next)
-      return next
+      return publicSettings(next)
     },
 
     'stats:get': () => getStats(ctx.db),

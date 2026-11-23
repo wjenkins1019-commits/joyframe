@@ -214,6 +214,21 @@ export interface AppSettings {
   controllerPrompts: 'auto' | 'xbox' | 'playstation' | 'none'
 }
 
+/**
+ * Settings as the renderer sees them. Provider secrets stay in the main
+ * process and are represented only by whether one is stored.
+ */
+export interface PublicSettings extends Omit<AppSettings, 'rawgApiKey' | 'igdbClientSecret'> {
+  rawgKeyConfigured: boolean
+  igdbSecretConfigured: boolean
+}
+
+/** Writable settings. Secrets are write-only and never read back. */
+export type SettingsPatch = Partial<Omit<AppSettings, 'rawgApiKey' | 'igdbClientSecret'>> & {
+  rawgApiKey?: string
+  igdbClientSecret?: string
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   themeAccent: '#D71935',
   consoleModeOnStartup: false,
@@ -374,7 +389,7 @@ export interface InitPayload {
   collections: Collection[]
   sections: HomeSection[]
   emulators: Emulator[]
-  settings: AppSettings
+  settings: PublicSettings
   stats: StatsSummary
   home: HomeRow[]
   info: AppInfo
@@ -507,8 +522,8 @@ export interface JoyframeApi {
     remove(id: string): Promise<boolean>
   }
   settings: {
-    get(): Promise<AppSettings>
-    update(patch: Partial<AppSettings>): Promise<AppSettings>
+    get(): Promise<PublicSettings>
+    update(patch: SettingsPatch): Promise<PublicSettings>
   }
   stats: {
     get(): Promise<StatsSummary>
