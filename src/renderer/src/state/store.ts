@@ -13,7 +13,6 @@ import type {
   InitPayload,
   PlayState,
   Platform,
-  ProviderStatus,
   ScanProgress,
   StatsSummary,
   ViewId
@@ -41,7 +40,6 @@ interface JoyframeState {
   info: AppInfo
   playState: PlayState
   lastPlayed: Game | null
-  providers: ProviderStatus[]
   introPlayed: boolean
   view: ViewId
   detailId: string | null
@@ -143,7 +141,6 @@ function applyPayload(set: (partial: Partial<JoyframeState>) => void, payload: I
     info: payload.info,
     playState: payload.playState,
     lastPlayed: payload.lastPlayedGame,
-    providers: payload.providers,
     introPlayed: payload.introPlayed,
     ready: true,
     loading: false,
@@ -175,7 +172,6 @@ export const useStore = create<JoyframeState>((set, get) => ({
     notice: null
   },
   lastPlayed: null,
-  providers: [],
   introPlayed: false,
   view: 'home',
   detailId: null,

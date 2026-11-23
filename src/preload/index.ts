@@ -70,7 +70,6 @@ const api: JoyframeApi = {
     reset: () => ipcRenderer.invoke('sections:reset')
   },
   metadata: {
-    providers: () => ipcRenderer.invoke('metadata:providers'),
     refresh: (gameId) => ipcRenderer.invoke('metadata:refresh', gameId),
     searchCandidates: (gameId) => ipcRenderer.invoke('metadata:candidates', gameId),
     setArtwork: (gameId, kind, url) => ipcRenderer.invoke('metadata:setArtwork', gameId, kind, url),

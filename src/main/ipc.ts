@@ -44,7 +44,6 @@ import {
 import {
   artworkCandidates,
   enrichGame,
-  providerStatuses,
   refreshAll,
   setArtwork,
   setLocalArtwork
@@ -124,7 +123,6 @@ export function buildInitPayload(ctx: AppContext): InitPayload {
     info: ctx.info,
     playState: ctx.launcher.getState(),
     lastPlayedGame: mostRecentlyPlayed(games),
-    providers: providerStatuses(settings),
     introPlayed: getMeta(ctx.db, 'introPlayed') === '1'
   }
 }
@@ -322,7 +320,6 @@ export function createHandlers(ctx: AppContext) {
     'sections:create': (title: string, collectionId: string) => createSection(ctx.db, title, collectionId),
     'sections:reset': () => resetSections(ctx.db),
 
-    'metadata:providers': () => providerStatuses(getSettings(ctx.db)),
     'metadata:refresh': (gameId: string) => enrichGame(metadataDeps(), gameId, true),
     'metadata:candidates': async (gameId: string) => {
       const game = getGame(ctx.db, gameId)

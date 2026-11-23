@@ -5,7 +5,6 @@ import type {
   MetadataFailureReason,
   MetadataRefreshSummary,
   MetadataResult,
-  ProviderStatus,
   Screenshot
 } from '../../shared/types.ts'
 import { cacheImage, copyLocalArtwork, artUrlFor } from './artwork.ts'
@@ -148,51 +147,6 @@ async function artFor(deps: MetadataDeps, url: string, base: string): Promise<st
   if (!url) return ''
   if (!deps.cacheArtwork) return url
   return cacheImage(deps.artworkDir, url, base)
-}
-
-export function providerStatuses(settings: AppSettings): ProviderStatus[] {
-  return [
-    {
-      id: 'steam',
-      name: 'Steam Store',
-      enabled: true,
-      requiresKey: false,
-      keyConfigured: true,
-      note: 'Keyless public metadata and artwork for Steam titles, including trailers and screenshots.'
-    },
-    {
-      id: 'igdb',
-      name: 'IGDB (Twitch)',
-      enabled: Boolean(settings.igdbClientId && settings.igdbClientSecret),
-      requiresKey: true,
-      keyConfigured: Boolean(settings.igdbClientId && settings.igdbClientSecret),
-      note: 'Add an IGDB client ID and secret in Settings to enrich non-Steam and retro games.'
-    },
-    {
-      id: 'rawg',
-      name: 'RAWG',
-      enabled: Boolean(settings.rawgApiKey),
-      requiresKey: true,
-      keyConfigured: Boolean(settings.rawgApiKey),
-      note: 'Add your free RAWG API key in Settings to fill descriptions, genres, developers and art for non-Steam games.'
-    },
-    {
-      id: 'screenscraper',
-      name: 'ScreenScraper',
-      enabled: false,
-      requiresKey: true,
-      keyConfigured: false,
-      note: 'ScreenScraper requires developer API credentials issued by the project. Not enabled in this build.'
-    },
-    {
-      id: 'local',
-      name: 'Local artwork',
-      enabled: true,
-      requiresKey: false,
-      keyConfigured: true,
-      note: 'Import your own covers, backgrounds and logos from disk at any time.'
-    }
-  ]
 }
 
 function stripHtml(input: string): string {

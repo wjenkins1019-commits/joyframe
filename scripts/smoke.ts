@@ -23,7 +23,6 @@ import {
   failureMessage,
   fetchJson,
   providerChain,
-  providerStatuses,
   rawgGamePatch,
   reasonForStatus,
   refreshAll,
@@ -488,7 +487,7 @@ await check('A game still running from a previous run is adopted and can be stop
   assert.equal(alive, false, 'stopping the adopted session left the game running')
 })
 
-console.log('\n[8] Settings, providers and backups')
+console.log('\n[8] Settings and backups')
 await check('Settings persist across reads', () => {
   updateSettings(db, { autoPreviews: false, previewDelay: 2400, steamPath: steamRoot })
   const settings = getSettings(db)
@@ -504,18 +503,6 @@ await check('Startup intro preference persists with a sane default', () => {
   updateSettings(db, { introMode: 'off' })
   assert.equal(getSettings(db).introMode, 'off')
   updateSettings(db, { introMode: 'always' })
-})
-
-await check('Metadata provider status reflects configured credentials', () => {
-  updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
-  const providers = providerStatuses(getSettings(db))
-  assert.equal(providers.find((provider) => provider.id === 'steam')?.enabled, true)
-  assert.equal(providers.find((provider) => provider.id === 'igdb')?.enabled, false)
-  assert.equal(providers.find((provider) => provider.id === 'rawg')?.enabled, false)
-  updateSettings(db, { igdbClientId: 'id', igdbClientSecret: 'secret', rawgApiKey: 'key' })
-  assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'igdb')?.enabled, true)
-  assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'rawg')?.enabled, true)
-  updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
 })
 
 await check('Provider secrets are encrypted at rest and hidden from public settings', () => {

@@ -372,15 +372,6 @@ export interface MetadataRefreshSummary {
   offline: number
 }
 
-export interface ProviderStatus {
-  id: string
-  name: string
-  enabled: boolean
-  requiresKey: boolean
-  keyConfigured: boolean
-  note: string
-}
-
 export interface BackupInfo {
   name: string
   path: string
@@ -410,7 +401,6 @@ export interface InitPayload {
   info: AppInfo
   playState: PlayState
   lastPlayedGame: Game | null
-  providers: ProviderStatus[]
   /** True once this profile has shown a startup intro. */
   introPlayed: boolean
 }
@@ -523,7 +513,6 @@ export interface JoyframeApi {
     reset(): Promise<HomeSection[]>
   }
   metadata: {
-    providers(): Promise<ProviderStatus[]>
     refresh(gameId: string): Promise<MetadataResult>
     searchCandidates(gameId: string): Promise<ArtworkCandidate[]>
     setArtwork(gameId: string, kind: ArtworkCandidate['kind'], url: string): Promise<Game>
