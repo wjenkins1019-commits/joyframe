@@ -34,6 +34,7 @@ export async function connect(debuggerUrl) {
 
   return {
     events,
+    close: () => socket.close(),
     call: (method, params = {}) =>
       new Promise((resolve) => {
         const id = ++nextId
@@ -61,14 +62,16 @@ export async function findWindow(port) {
 /**
  * Connect to a window with console capture enabled, reload so the capture
  * covers the whole boot rather than the tail after the window appeared, and
- * return `evaluate` plus `read` for probing the rendered page.
+ * return `evaluate` plus `read` for probing the rendered page. Pass
+ * `{ reload: false }` when the test is about what the first load does — a
+ * reload would spend a one-shot startup ident before it can be observed.
  */
-export async function createSession(target) {
-  const { call, events } = await connect(target.webSocketDebuggerUrl)
+export async function createSession(target, { reload = true } = {}) {
+  const { call, close, events } = await connect(target.webSocketDebuggerUrl)
   await call('Runtime.enable')
   await call('Log.enable')
   await call('Page.enable')
-  await call('Page.reload')
+  if (reload) await call('Page.reload')
 
   const evaluate = async (expression) => {
     const response = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
@@ -99,7 +102,7 @@ export async function createSession(target) {
     return value
   }
 
-  return { events, evaluate, read }
+  return { call, close, events, evaluate, read }
 }
 
 /** Renderer console warnings, errors and exceptions captured during a boot. */

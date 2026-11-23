@@ -16,13 +16,13 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createSession, delay, findWindow } from './cdp.mjs'
 import { openDatabase } from '../src/main/services/db.ts'
 import { getSettings } from '../src/main/services/settings.ts'
 
 const profile = path.resolve('.verify-intro/select-pad-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const port = 9272
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const FAKE_PAD = `(() => {
   const pad = {
@@ -54,22 +54,12 @@ const FAKE_PAD = `(() => {
 })()`
 
 let app: ReturnType<typeof spawn> | null = null
-let ws: WebSocket | null = null
-let id = 0
-const pending = new Map<number, (value: Record<string, any>) => void>()
+let session: Awaited<ReturnType<typeof createSession>> | null = null
 
-const send = (method: string, params: Record<string, unknown> = {}) =>
-  new Promise<Record<string, any>>((resolve) => {
-    const current = ++id
-    pending.set(current, resolve)
-    ws!.send(JSON.stringify({ id: current, method, params }))
-  })
+const send = (method: string, params: Record<string, unknown> = {}): Promise<Record<string, any>> =>
+  session!.call(method, params)
 
-const evaluate = async (expression: string): Promise<any> => {
-  const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (response.result?.exceptionDetails) throw new Error(response.result.exceptionDetails.exception?.description)
-  return response.result?.result?.value
-}
+const evaluate = (expression: string): Promise<any> => session!.evaluate(expression)
 
 async function launch(): Promise<void> {
   app = spawn(
@@ -77,39 +67,18 @@ async function launch(): Promise<void> {
     ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'],
     { stdio: 'ignore' }
   )
-  let target: { webSocketDebuggerUrl: string } | null = null
-  for (let attempt = 0; attempt < 80 && !target; attempt++) {
-    await delay(200)
-    try {
-      const list = (await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json()) as {
-        type: string
-        webSocketDebuggerUrl: string
-      }[]
-      target = list.find((entry) => entry.type === 'page') ?? null
-    } catch {
-      /* starting */
-    }
-  }
+  const target = await findWindow(port)
   if (!target) throw new Error('no renderer')
-  ws = new WebSocket(target.webSocketDebuggerUrl)
-  await new Promise((resolve) => ws!.addEventListener('open', resolve, { once: true }))
-  ws.addEventListener('message', (event) => {
-    const data = JSON.parse(String(event.data))
-    if (data.id && pending.has(data.id)) {
-      pending.get(data.id)?.(data)
-      pending.delete(data.id)
-    }
-  })
-  await send('Page.enable')
+  session = await createSession(target)
 }
 
 async function shutdown(): Promise<void> {
   try {
-    ws?.close()
+    session?.close()
   } catch {
     /* closed */
   }
-  ws = null
+  session = null
   try {
     if (app?.pid) execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' })
   } catch {

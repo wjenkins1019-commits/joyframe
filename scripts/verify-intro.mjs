@@ -15,13 +15,13 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createSession, delay, findWindow } from './cdp.mjs'
 
 const profile = path.resolve('.verify-intro/intro-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const port = 9266
 const shot = path.resolve('.verify-intro/intro.png')
 fs.rmSync(shot, { force: true })
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const app = spawn('node_modules/electron/dist/electron.exe', [
   '.',
   `--user-data-dir=${profile}`,
@@ -29,39 +29,13 @@ const app = spawn('node_modules/electron/dist/electron.exe', [
   '--no-sandbox'
 ], { stdio: 'ignore' })
 
-let target = null
-for (let attempt = 0; attempt < 80 && !target; attempt++) {
-  await delay(200)
-  try {
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json()
-    target = list.find((entry) => entry.type === 'page')
-  } catch {}
-}
+const target = await findWindow(port)
 if (!target) throw new Error('no renderer target')
-const ws = new WebSocket(target.webSocketDebuggerUrl)
-await new Promise((resolve) => ws.addEventListener('open', resolve, { once: true }))
-let id = 0
-const pending = new Map()
-ws.addEventListener('message', (event) => {
-  const data = JSON.parse(event.data)
-  if (data.id && pending.has(data.id)) {
-    pending.get(data.id)(data)
-    pending.delete(data.id)
-  }
-})
-const send = (method, params = {}) =>
-  new Promise((resolve) => {
-    const current = ++id
-    pending.set(current, resolve)
-    ws.send(JSON.stringify({ id: current, method, params }))
-  })
-const evaluate = async (expression) => {
-  const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  return response.result?.exceptionDetails ? { error: response.result.exceptionDetails.exception?.description } : response.result?.result?.value
-}
-await send('Page.enable')
+const { call, close, evaluate } = await createSession(target)
 
-const phase = () => evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`)
+// A reload briefly kills the context; polling treats that as "not yet".
+const phase = () =>
+  evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
 
 async function waitForIntro() {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -82,7 +56,7 @@ async function waitForGone(timeout = 6000) {
 }
 
 async function reloadWithIntro() {
-  await send('Page.reload')
+  await call('Page.reload')
   await delay(500)
   const seen = await waitForIntro()
   if (!seen) throw new Error('intro did not replay after reload')
@@ -102,19 +76,19 @@ if (!appVisible) throw new Error('app shell missing after intro')
 results.push('auto')
 
 // Capture a frame of the ident, including the skip hint.
-await send('Page.reload')
+await call('Page.reload')
 await delay(500)
 await waitForIntro()
 await delay(1150)
-const captured = await send('Page.captureScreenshot', { format: 'png' })
+const captured = await call('Page.captureScreenshot', { format: 'png' })
 if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
 results.push('screenshot')
 
 // 2. A key press dismisses it and does not activate anything underneath.
 await reloadWithIntro()
 const keyStart = Date.now()
-await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
-await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
 const keyMs = await waitForGone(3000)
 const keyDetail = await evaluate(`Boolean(document.querySelector('[data-jf-detail]'))`)
 console.log('key skip ms:', keyMs === null ? null : Date.now() - keyStart, 'detail opened:', keyDetail)
@@ -124,8 +98,8 @@ results.push('key')
 
 // 3. A click dismisses it without clicking through to the UI.
 await reloadWithIntro()
-await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 700, y: 420, button: 'left', clickCount: 1 })
-await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 700, y: 420, button: 'left', clickCount: 1 })
+await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: 700, y: 420, button: 'left', clickCount: 1 })
+await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 700, y: 420, button: 'left', clickCount: 1 })
 const clickMs = await waitForGone(3000)
 const clickDetail = await evaluate(`Boolean(document.querySelector('[data-jf-detail]'))`)
 console.log('click skip ms:', clickMs, 'detail opened:', clickDetail)
@@ -173,15 +147,15 @@ async function expectNoIntro(label) {
 }
 
 await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
-await send('Page.reload')
+await call('Page.reload')
 await expectNoIntro('off')
 
 // 6. "First run only" after this profile has already seen it: stays quiet.
 await evaluate(`window.joyframe.settings.update({ introMode: 'first-run' })`)
-await send('Page.reload')
+await call('Page.reload')
 await expectNoIntro('first-run seen')
 
-ws.close()
+close()
 try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
 await delay(900)
 try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}

@@ -11,6 +11,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createSession, delay, findWindow } from './cdp.mjs'
 import { openDatabase } from '../src/main/services/db.ts'
 import { getMeta, updateSettings } from '../src/main/services/settings.ts'
 
@@ -21,50 +22,18 @@ updateSettings(db, { introMode: 'first-run' })
 db.close()
 
 const port = 9267
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const app = spawn(
   'node_modules/electron/dist/electron.exe',
   ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'],
   { stdio: 'ignore' }
 )
 
-let target: { webSocketDebuggerUrl: string } | null = null
-for (let attempt = 0; attempt < 80 && !target; attempt++) {
-  await delay(200)
-  try {
-    const list = (await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json()) as {
-      type: string
-      webSocketDebuggerUrl: string
-    }[]
-    target = list.find((entry) => entry.type === 'page') ?? null
-  } catch {
-    /* renderer still starting */
-  }
-}
+const target = await findWindow(port)
 if (!target) throw new Error('no renderer target')
-const ws = new WebSocket(target.webSocketDebuggerUrl)
-await new Promise((resolve) => ws.addEventListener('open', resolve, { once: true }))
-let id = 0
-const pending = new Map<number, (value: Record<string, any>) => void>()
-ws.addEventListener('message', (event) => {
-  const data = JSON.parse(String(event.data))
-  if (data.id && pending.has(data.id)) {
-    pending.get(data.id)?.(data)
-    pending.delete(data.id)
-  }
-})
-const send = (method: string, params: Record<string, unknown> = {}) =>
-  new Promise<Record<string, any>>((resolve) => {
-    const current = ++id
-    pending.set(current, resolve)
-    ws.send(JSON.stringify({ id: current, method, params }))
-  })
-const evaluate = async (expression: string): Promise<unknown> => {
-  const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  return response.result?.exceptionDetails ? null : response.result?.result?.value
-}
-await send('Page.enable')
-const phase = () => evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`)
+// The first launch is the thing under test, so attach without reloading.
+const { call, close, evaluate } = await createSession(target, { reload: false })
+const phase = () =>
+  evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
 
 async function waitForIntro(timeout = 8000): Promise<boolean> {
   const deadline = Date.now() + timeout
@@ -81,7 +50,7 @@ if (!firstPlayed) throw new Error('first-run mode did not show the intro on a fr
 
 // Wait for it to finish, then relaunch the renderer: it must stay quiet.
 await delay(3200)
-await send('Page.reload')
+await call('Page.reload')
 let secondPlayed = false
 const deadline = Date.now() + 2600
 while (Date.now() < deadline) {
@@ -96,7 +65,7 @@ console.log('second launch intro:', secondPlayed, 'app visible:', appVisible)
 if (secondPlayed) throw new Error('first-run mode replayed the intro')
 if (!appVisible) throw new Error('app did not render after the skipped intro')
 
-ws.close()
+close()
 try {
   execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' })
 } catch {

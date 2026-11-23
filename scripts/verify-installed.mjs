@@ -14,12 +14,12 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createSession, delay, findWindow } from './cdp.mjs'
 
 const profile = path.resolve('.verify-intro/installed-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const shot = path.resolve('.verify-intro/intro-installed.png')
 const port = 9268
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const exe = process.env.JOYFRAME_EXE ?? 'C:/Program Files/JOYFRAME/JOYFRAME.exe'
 if (!fs.existsSync(exe)) throw new Error(`installed build missing at ${exe} (set JOYFRAME_EXE to override)`)
@@ -30,52 +30,25 @@ const app = spawn(exe, [
   '--no-sandbox'
 ], { stdio: 'ignore' })
 
-let target = null
-for (let attempt = 0; attempt < 80 && !target; attempt++) {
-  await delay(200)
-  try {
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json()
-    target = list.find((entry) => entry.type === 'page')
-  } catch {}
-}
+const target = await findWindow(port)
 if (!target) throw new Error('installed app did not expose a renderer')
-const ws = new WebSocket(target.webSocketDebuggerUrl)
-await new Promise((resolve) => ws.addEventListener('open', resolve, { once: true }))
-let id = 0
-const pending = new Map()
-ws.addEventListener('message', (event) => {
-  const data = JSON.parse(event.data)
-  if (data.id && pending.has(data.id)) {
-    pending.get(data.id)(data)
-    pending.delete(data.id)
-  }
-})
-const send = (method, params = {}) =>
-  new Promise((resolve) => {
-    const current = ++id
-    pending.set(current, resolve)
-    ws.send(JSON.stringify({ id: current, method, params }))
-  })
-const evaluate = async (expression) => {
-  const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  return response.result?.exceptionDetails ? { error: response.result.exceptionDetails.exception?.description } : response.result?.result?.value
-}
-await send('Page.enable')
+const { call, close, evaluate } = await createSession(target)
 
-const phase = () => evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`)
+const phase = () =>
+  evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
 let seen = null
 for (let attempt = 0; attempt < 40 && !seen; attempt++) {
   seen = await phase()
   if (!seen) await delay(100)
 }
-const captured = await send('Page.captureScreenshot', { format: 'png' })
+const captured = await call('Page.captureScreenshot', { format: 'png' })
 if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
 const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`)
 
 // A real key press must dismiss the installed build's intro immediately.
 const started = Date.now()
-await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
-await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
 let cleared = false
 while (Date.now() - started < 2500) {
   if ((await phase()) === null) { cleared = true; break }
@@ -91,7 +64,7 @@ console.log('cleared after key press ms:', cleared ? skipMs : null, 'detail open
 // The installed build must also expose the new mode and honour "off".
 const mode = await evaluate(`window.joyframe.settings.get().then((s) => s.introMode)`)
 await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
-await send('Page.reload')
+await call('Page.reload')
 await delay(700)
 let offPlayed = false
 const offDeadline = Date.now() + 2600
@@ -108,7 +81,7 @@ if (mode !== 'always') throw new Error(`unexpected installed introMode ${JSON.st
 if (offPlayed) throw new Error('installed build ignored introMode off')
 if (!offApp) throw new Error('installed app missing with intro off')
 
-ws.close()
+close()
 try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
 await delay(1200)
 try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
