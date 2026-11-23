@@ -129,8 +129,67 @@ async function fetchSteamDetails(appid: string): Promise<SteamAppDetails | null>
     return null
   }
 }
-async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): Promise<MetadataResult> {
-  const appid = game.sourceId
+
+interface SteamStoreItem {
+  id?: number
+  name?: string
+}
+
+/**
+ * Pick the App ID a store search result matches. Exported so the smoke test can
+ * verify the matching rules without network access. Only an exact or contained
+ * title match is trusted: a loose word overlap can resolve a GOG/Epic title to
+ * an unrelated Steam app, which is worse than no match at all.
+ */
+export function steamStoreMatch(title: string, items: SteamStoreItem[]): string {
+  const best = items
+    .filter((item) => typeof item.id === 'number' && typeof item.name === 'string' && item.name)
+    .map((item) => ({ item, score: titleScore(title, item.name as string) }))
+    .sort((a, b) => b.score - a.score)[0]
+  if (!best || best.score < 0.8) return ''
+  return String(best.item.id)
+}
+
+/**
+ * Keyless title -> App ID resolution through the public store search, so titles
+ * added from GOG, Epic or itch can reuse the Steam Store enrichment.
+ */
+async function searchSteamAppId(title: string): Promise<string> {
+  try {
+    const url = new URL('https://store.steampowered.com/api/storesearch/')
+    url.searchParams.set('term', title)
+    url.searchParams.set('l', 'english')
+    url.searchParams.set('cc', 'US')
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
+    })
+    if (!response.ok) return ''
+    const json = (await response.json()) as { items?: SteamStoreItem[] }
+    return steamStoreMatch(title, json.items ?? [])
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Steam often ships a detailed description that is nothing but image and video
+ * embeds, leaving a short heading once tags are stripped. Prefer whichever
+ * field yields more readable text. Exported for the smoke test.
+ */
+export function bestSteamDescription(detailedHtml: string, shortHtml: string): string {
+  const detailed = stripHtml(detailedHtml || '')
+  const short = stripHtml(shortHtml || '')
+  return short.length > detailed.length ? short : detailed
+}
+
+async function enrichFromSteam(
+  deps: MetadataDeps,
+  game: Game,
+  force: boolean,
+  appidOverride = ''
+): Promise<MetadataResult> {
+  const appid = appidOverride || game.sourceId
   if (!appid || !/^\d+$/.test(appid)) {
     return { ok: false, provider: 'steam', confidence: 0, message: 'This game has no Steam App ID to look up.' }
   }
@@ -177,7 +236,8 @@ async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): 
 
   const patch: Partial<Game> = {
     title: details.name || game.title,
-    description: stripHtml(details.detailed_description || details.short_description || game.description),
+    description:
+      bestSteamDescription(details.detailed_description || '', details.short_description || '') || game.description,
     developer: (details.developers ?? []).join(', ') || game.developer,
     publisher: (details.publishers ?? []).join(', ') || game.publisher,
     genres: genres.length ? genres : game.genres,
@@ -193,7 +253,12 @@ async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): 
     rating: details.metacritic?.score ?? game.rating,
     metadataProvider: 'steam',
     metadataConfidence: 0.95,
-    extra: { ...game.extra, metadataUpdatedAt: nowIso() }
+    extra: {
+      ...game.extra,
+      // Remember a store-search resolution so later refreshes skip the lookup.
+      ...(appidOverride ? { steamAppId: appid } : {}),
+      metadataUpdatedAt: nowIso()
+    }
   }
 
   const updated = updateGameRecord(deps.db, game.id, patch)
@@ -492,8 +557,8 @@ export async function enrichGame(deps: MetadataDeps, gameId: string, force = fal
   const game = getGame(deps.db, gameId)
   if (!game) throw new Error('Game not found')
 
-  // Honour the preferred provider: when IGDB is selected and keyed, try it
-  // first and fall back to Steam for titles that carry an App ID.
+  // Honour the preferred provider, then fall back to any other provider whose
+  // credentials are configured, so a failed match still gets a second chance.
   const igdbReady = Boolean(deps.settings.igdbClientId && deps.settings.igdbClientSecret)
   const rawgReady = Boolean(deps.settings.rawgApiKey)
 
@@ -538,6 +603,19 @@ export async function enrichGame(deps: MetadataDeps, gameId: string, force = fal
   // Manually added PC titles (GOG, Epic, itch) carry no App ID. Resolve one
   // through the keyless store search so Steam metadata can fill them too; a
   // cached resolution from an earlier refresh avoids the extra request.
+  const searchablePcTitle =
+    (game.source === 'manual' || game.source === 'pc-scan') &&
+    game.platformId === 'windows' &&
+    !/^\d+$/.test(game.sourceId)
+  if (searchablePcTitle) {
+    const cached = typeof game.extra.steamAppId === 'string' ? game.extra.steamAppId : ''
+    const appid = /^\d+$/.test(cached) ? cached : await searchSteamAppId(game.title)
+    if (appid) {
+      const steam = await enrichFromSteam(deps, game, force, appid)
+      if (steam.ok || (!igdbReady && !rawgReady)) return steam
+    }
+  }
+
   if (igdbReady) return enrichFromIgdb(deps, game)
   if (rawgReady) return enrichFromRawg(deps, game)
 

@@ -87,6 +87,9 @@ npm run smoke
   publishers, genres, release date, Metacritic score, screenshots, MP4/WebM trailers) with artwork either streamed
   from the CDN or cached locally, depending on the artwork storage setting.
 - Launches with `steam://rungameid/<appid>`; Steam keeps handling authentication, DRM and updates.
+- Titles added manually or through a folder scan (GOG, Epic, itch) are matched to an App ID through Steam's keyless
+  store search when the title is close enough, so the same Store metadata and artwork fills them; the resolution is
+  remembered per game so later refreshes skip the lookup.
 
 ### Emulation
 

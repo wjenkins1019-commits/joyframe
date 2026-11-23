@@ -15,7 +15,12 @@ import { openDatabase } from '../src/main/services/db.ts'
 import { addEmulator, testEmulator } from '../src/main/services/emulators.ts'
 import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
 import { buildHomeRows, createCollection, getStats, listCollections, listSections } from '../src/main/services/library.ts'
-import { providerStatuses, rawgGamePatch } from '../src/main/services/metadata.ts'
+import {
+  bestSteamDescription,
+  providerStatuses,
+  rawgGamePatch,
+  steamStoreMatch
+} from '../src/main/services/metadata.ts'
 import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
@@ -501,6 +506,28 @@ await check('Metadata provider status reflects configured credentials', () => {
   assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'igdb')?.enabled, true)
   assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'rawg')?.enabled, true)
   updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
+})
+
+await check('Steam store search resolves a manual PC title to an App ID', () => {
+  const items = [
+    { id: 292030, name: 'The Witcher 3: Wild Hunt' },
+    { id: 1091500, name: 'Cyberpunk 2077' },
+    { id: 271590, name: 'Grand Theft Auto V' }
+  ]
+  assert.equal(steamStoreMatch('Cyberpunk 2077', items), '1091500')
+  assert.equal(steamStoreMatch('Cyberpunk 2077: Phantom Liberty', items), '1091500')
+  assert.equal(steamStoreMatch('The Witcher 3 Wild Hunt', items), '292030')
+  assert.equal(steamStoreMatch('Disco Elysium', items), '', 'unrelated title matched a Steam app')
+  assert.equal(steamStoreMatch('Cyberpunk 2077', []), '')
+})
+
+await check('Steam descriptions fall back to the short blurb when the long one is only embeds', () => {
+  const imageOnly = '<h1>Game: Ultimate Edition</h1><p><span><img src="art.avif" /></span></p><h1>About the Game</h1>'
+  const blurb = '<p>An open-world RPG set in a dangerous megalopolis.</p>'
+  assert.equal(bestSteamDescription(imageOnly, blurb), 'An open-world RPG set in a dangerous megalopolis.')
+  const detailed = `<p>${'A detailed paragraph about systems, story and combat. '.repeat(4).trim()}</p>`
+  assert.equal(bestSteamDescription(detailed, blurb), 'A detailed paragraph about systems, story and combat. '.repeat(4).trim())
+  assert.equal(bestSteamDescription('', ''), '')
 })
 
 await check('RAWG mapping fills descriptions, companies, genres and artwork', () => {
