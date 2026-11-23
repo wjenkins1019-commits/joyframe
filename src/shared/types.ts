@@ -348,7 +348,7 @@ export interface ArtworkCandidate {
   kind: 'cover' | 'background' | 'logo' | 'screenshot' | 'banner'
 }
 
-export type MetadataFailureReason = 'no-match' | 'rate-limit' | 'auth' | 'offline' | 'budget'
+export type MetadataFailureReason = 'no-match' | 'rate-limit' | 'auth' | 'offline' | 'budget' | 'server'
 
 export interface MetadataResult {
   ok: boolean
@@ -370,6 +370,8 @@ export interface MetadataRefreshSummary {
   rateLimited: number
   authFailed: number
   offline: number
+  /** Provider reachable but answering 5xx. */
+  serverErrors: number
 }
 
 export interface BackupInfo {

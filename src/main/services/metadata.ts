@@ -65,7 +65,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** HTTP status -> the reason a bulk refresh should report. */
 export function reasonForStatus(status: number): MetadataFailureReason {
   if (status === 401 || status === 403) return 'auth'
-  if (status === 429 || status >= 500) return 'rate-limit'
+  if (status === 429) return 'rate-limit'
+  if (status >= 500) return 'server'
   return 'no-match'
 }
 
@@ -76,6 +77,8 @@ export function failureMessage(provider: MetadataProviderId, reason: MetadataFai
       return `${name} rejected the credentials. Check the API key in Settings.`
     case 'rate-limit':
       return `${name} rate-limited the request. Try again in a few minutes.`
+    case 'server':
+      return `${name} had a server error. Try again later.`
     case 'budget':
       return `The ${name} request budget for this refresh ran out.`
     case 'offline':
@@ -516,9 +519,13 @@ async function igdbToken(
   })
   if ('reason' in outcome) {
     // Twitch reports an invalid client as a 400, so anything that is not a
-    // transport or throttling problem here means the credentials were refused.
+    // transport, server or throttling problem here means the credentials were
+    // refused.
     const reason =
-      outcome.reason === 'rate-limit' || outcome.reason === 'offline' || outcome.reason === 'budget'
+      outcome.reason === 'rate-limit' ||
+      outcome.reason === 'server' ||
+      outcome.reason === 'offline' ||
+      outcome.reason === 'budget'
         ? outcome.reason
         : 'auth'
     return { reason }
@@ -749,7 +756,7 @@ export async function enrichGame(deps: MetadataDeps, gameId: string, force = fal
   }
 
   if (failures.length) {
-    const priority: MetadataFailureReason[] = ['auth', 'rate-limit', 'budget', 'offline', 'no-match']
+    const priority: MetadataFailureReason[] = ['auth', 'rate-limit', 'server', 'budget', 'offline', 'no-match']
     return {
       ok: false,
       provider: 'none',
@@ -857,7 +864,8 @@ export async function refreshAll(
     noMatch: 0,
     rateLimited: 0,
     authFailed: 0,
-    offline: 0
+    offline: 0,
+    serverErrors: 0
   }
   let processed = 0
   for (const row of rows) {
@@ -870,6 +878,7 @@ export async function refreshAll(
         summary.failed += 1
         if (result.reason === 'auth') summary.authFailed += 1
         else if (result.reason === 'rate-limit' || result.reason === 'budget') summary.rateLimited += 1
+        else if (result.reason === 'server') summary.serverErrors += 1
         else if (result.reason === 'offline') summary.offline += 1
         else summary.noMatch += 1
       }
