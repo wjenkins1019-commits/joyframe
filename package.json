@@ -20,6 +20,10 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify:dist-pad": "node scripts/verify-pad.mjs --dist",
     "verify:first-run": "node scripts/verify-first-run.mjs",
+    "verify:intro": "node scripts/verify-intro.mjs && node scripts/verify-intro-first-run.ts",
+    "verify:intro-ui": "node scripts/verify-intro-ui.ts",
+    "verify:intro-pad": "node scripts/verify-intro-pad.ts",
+    "verify:installed": "node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
     "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad"
   },

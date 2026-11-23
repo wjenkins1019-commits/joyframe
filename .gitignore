@@ -13,6 +13,7 @@ release/
 .legacy/
 .verify-dist/
 .verify-first-run/
+.verify-intro/
 .DS_Store
 resources/icon.ico
 resources/icon-512.png
