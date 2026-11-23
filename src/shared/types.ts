@@ -204,6 +204,8 @@ export interface AppSettings {
   artworkStorage: 'remote' | 'cache'
   igdbClientId: string
   igdbClientSecret: string
+  /** Free RAWG API key, used for non-Steam descriptions, genres and artwork. */
+  rawgApiKey: string
   autoScanOnStartup: boolean
   metadataRefreshDays: number
   backupKeep: number
@@ -228,6 +230,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   artworkStorage: 'remote',
   igdbClientId: '',
   igdbClientSecret: '',
+  rawgApiKey: '',
   autoScanOnStartup: false,
   metadataRefreshDays: 30,
   backupKeep: 10,

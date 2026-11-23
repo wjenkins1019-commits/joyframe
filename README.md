@@ -245,7 +245,9 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
   track playtime for games launched outside JOYFRAME beyond the imported snapshot.
 - **Save states** are indexed and displayed; resuming directly from a state depends on the emulator's documented CLI.
   JOYFRAME never assumes this works and never rewrites saves.
-- **Metadata providers:** Steam Store (keyless) and IGDB (Twitch client ID/secret in Settings) are implemented.
+- **Metadata providers:** Steam Store (keyless), RAWG (free API key in Settings) and IGDB (Twitch client ID/secret in
+  Settings) are implemented. RAWG supplies descriptions, genres, companies, release dates, cover art and screenshots for
+  non-Steam games, with the "Data and images by RAWG" attribution its terms require shown in Settings and on game pages.
   ScreenScraper requires developer credentials issued by that project and is listed but not enabled. Manual artwork
   import always works and is cached locally.
 - **Platform support** depends on emulator availability and the user's firmware; Switch/PS3/PS2/etc. are not shipped

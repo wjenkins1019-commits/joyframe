@@ -460,6 +460,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <Field label="Preferred provider">
               <Select value={draft.metadataProvider} onChange={(event) => commit({ metadataProvider: event.target.value })}>
                 <option value="steam">Steam Store (keyless)</option>
+                <option value="rawg">RAWG (requires free API key)</option>
                 <option value="igdb">IGDB (requires Twitch credentials)</option>
               </Select>
             </Field>
@@ -469,6 +470,15 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               checked={draft.artworkStorage === 'cache'}
               onChange={(value) => commit({ artworkStorage: value ? 'cache' : 'remote' })}
             />
+            <Field label="RAWG API key">
+              <Input
+                type="password"
+                value={draft.rawgApiKey}
+                onChange={(event) => setDraft({ ...draft, rawgApiKey: event.target.value })}
+                onBlur={() => commitText('rawgApiKey')}
+                placeholder="Free key from rawg.io/apidocs"
+              />
+            </Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="IGDB client ID">
                 <Input
@@ -491,9 +501,24 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <div className="rounded-lg border border-white/8 bg-black/25 p-3 text-[11px] leading-relaxed text-jf-muted">
               <p className="font-semibold text-white/75">Provider notes</p>
               <p className="mt-1">
-                Steam Store metadata, trailers and screenshot art work without a key for Steam titles. IGDB requires a free
-                Twitch developer application and also supplies art for retro and non-Steam titles. ScreenScraper needs developer
+                Steam Store metadata, trailers and screenshot art work without a key for Steam titles. RAWG requires a free
+                API key and fills descriptions, genres, companies, release dates and artwork for non-Steam games. IGDB requires
+                a free Twitch developer application and also supplies art for retro titles. ScreenScraper needs developer
                 credentials issued by that project and is not enabled in this build — you can always import your own artwork.
+              </p>
+              <p className="mt-1">
+                Non-Steam metadata and artwork come from{' '}
+                <a
+                  href="https://rawg.io"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    void api.system.openExternal('https://rawg.io')
+                  }}
+                  className="font-semibold text-jf-accent underline decoration-jf-accent/40 underline-offset-2 hover:decoration-jf-accent"
+                >
+                  RAWG
+                </a>
+                , as their terms require.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

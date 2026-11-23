@@ -15,7 +15,7 @@ import { openDatabase } from '../src/main/services/db.ts'
 import { addEmulator, testEmulator } from '../src/main/services/emulators.ts'
 import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
 import { buildHomeRows, createCollection, getStats, listCollections, listSections } from '../src/main/services/library.ts'
-import { providerStatuses } from '../src/main/services/metadata.ts'
+import { providerStatuses, rawgGamePatch } from '../src/main/services/metadata.ts'
 import { queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
@@ -492,13 +492,51 @@ await check('Startup intro preference persists with a sane default', () => {
 })
 
 await check('Metadata provider status reflects configured credentials', () => {
-  updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
   const providers = providerStatuses(getSettings(db))
   assert.equal(providers.find((provider) => provider.id === 'steam')?.enabled, true)
   assert.equal(providers.find((provider) => provider.id === 'igdb')?.enabled, false)
-  updateSettings(db, { igdbClientId: 'id', igdbClientSecret: 'secret' })
+  assert.equal(providers.find((provider) => provider.id === 'rawg')?.enabled, false)
+  updateSettings(db, { igdbClientId: 'id', igdbClientSecret: 'secret', rawgApiKey: 'key' })
   assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'igdb')?.enabled, true)
-  updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  assert.equal(providerStatuses(getSettings(db)).find((provider) => provider.id === 'rawg')?.enabled, true)
+  updateSettings(db, { igdbClientId: '', igdbClientSecret: '', rawgApiKey: '' })
+})
+
+await check('RAWG mapping fills descriptions, companies, genres and artwork', () => {
+  const game = queryGames(db, {}, true).find((entry) => entry.source === 'rom-scan')
+  assert.ok(game, 'no ROM game to map onto')
+  const patch = rawgGamePatch(
+    {
+      id: 3498,
+      name: game.title,
+      description_raw: 'A plumber searches for a missing princess.',
+      released: '1985-09-13',
+      background_image: 'https://media.rawg.io/cover.jpg',
+      background_image_additional: 'https://media.rawg.io/hero.jpg',
+      genres: [{ name: 'Platformer' }, { name: 'Adventure' }],
+      developers: [{ name: 'Nintendo R&D4' }],
+      publishers: [{ name: 'Nintendo' }],
+      metacritic: 94
+    },
+    game,
+    { cover: 'https://media.rawg.io/cover.jpg', background: 'https://media.rawg.io/hero.jpg' },
+    [{ full: 'https://media.rawg.io/shot.jpg' }],
+    0.9
+  )
+  assert.equal(patch.description, 'A plumber searches for a missing princess.')
+  assert.deepEqual(patch.genres, ['Platformer', 'Adventure'])
+  assert.equal(patch.developer, 'Nintendo R&D4')
+  assert.equal(patch.publisher, 'Nintendo')
+  assert.equal(patch.releaseDate, '1985-09-13')
+  assert.equal(patch.releaseYear, 1985)
+  assert.equal(patch.coverPath, 'https://media.rawg.io/cover.jpg')
+  assert.equal(patch.backgroundPath, 'https://media.rawg.io/hero.jpg')
+  assert.equal(patch.screenshots?.length, 1)
+  assert.equal(patch.rating, 94)
+  assert.equal(patch.metadataProvider, 'rawg')
+  assert.equal(patch.metadataConfidence, 0.9)
+  assert.ok(typeof patch.extra?.metadataUpdatedAt === 'string')
 })
 
 await check('Database backups are valid SQLite files and restorable candidates', async () => {
@@ -515,6 +553,7 @@ await check('Settings and game data survive a database reopen', () => {
   const games = queryGames(reopened, {}, true)
   assert.ok(games.length >= 9)
   assert.equal(getSettings(reopened).previewDelay, 2400)
+  assert.equal(getSettings(reopened).rawgApiKey, '')
   const celeste = games.find((game) => game.title.toLowerCase().includes('celeste'))
   assert.ok(celeste)
   reopened.close()

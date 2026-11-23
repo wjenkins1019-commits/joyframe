@@ -170,6 +170,18 @@ export function DetailCards(props: DetailCardsProps): React.JSX.Element {
                 Metadata: {game.metadataProvider} · {Math.round(game.metadataConfidence * 100)}%
               </Badge>
             )}
+            {game.metadataProvider === 'rawg' && (
+              <a
+                href="https://rawg.io"
+                onClick={(event) => {
+                  event.preventDefault()
+                  void api.system.openExternal('https://rawg.io')
+                }}
+                className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-white/55 transition hover:text-white/85"
+              >
+                Data and images by RAWG
+              </a>
+            )}
             {isMetadataStale && (
               <button
                 data-nav="1"

@@ -50,6 +50,14 @@ export function providerStatuses(settings: AppSettings): ProviderStatus[] {
       note: 'Add an IGDB client ID and secret in Settings to enrich non-Steam and retro games.'
     },
     {
+      id: 'rawg',
+      name: 'RAWG',
+      enabled: Boolean(settings.rawgApiKey),
+      requiresKey: true,
+      keyConfigured: Boolean(settings.rawgApiKey),
+      note: 'Add your free RAWG API key in Settings to fill descriptions, genres, developers and art for non-Steam games.'
+    },
+    {
       id: 'screenscraper',
       name: 'ScreenScraper',
       enabled: false,
@@ -121,7 +129,6 @@ async function fetchSteamDetails(appid: string): Promise<SteamAppDetails | null>
     return null
   }
 }
-
 async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): Promise<MetadataResult> {
   const appid = game.sourceId
   if (!appid || !/^\d+$/.test(appid)) {
@@ -197,6 +204,138 @@ async function enrichFromSteam(deps: MetadataDeps, game: Game, force: boolean): 
     message: `Updated ${updated.title} with Steam Store metadata.`,
     game: updated,
     candidates: artworkCandidates(updated, appid)
+  }
+}
+
+/* ------------------------------- RAWG ------------------------------- */
+
+const RAWG_BASE = 'https://api.rawg.io/api'
+
+export interface RawgGame {
+  id: number
+  slug?: string
+  name: string
+  description_raw?: string
+  description?: string
+  released?: string | null
+  background_image?: string | null
+  background_image_additional?: string | null
+  genres?: { name: string }[]
+  developers?: { name: string }[]
+  publishers?: { name: string }[]
+  metacritic?: number | null
+}
+
+async function rawgGet<T>(
+  settings: AppSettings,
+  route: string,
+  params: Record<string, string> = {}
+): Promise<T | null> {
+  const url = new URL(`${RAWG_BASE}${route}`)
+  url.searchParams.set('key', settings.rawgApiKey)
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
+    })
+    if (!response.ok) return null
+    return (await response.json()) as T
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Map a RAWG record onto library fields. Exported so the smoke test can verify
+ * the mapping without network access. RAWG has no portrait box art, so its main
+ * artwork doubles as the cover when the game has none yet.
+ */
+export function rawgGamePatch(
+  entry: RawgGame,
+  game: Game,
+  art: { cover: string; background: string },
+  screenshots: Screenshot[],
+  confidence: number
+): Partial<Game> {
+  const yearMatch = entry.released?.match(/^\d{4}/)
+  const genres = (entry.genres ?? []).map((genre) => genre.name)
+  const description = entry.description_raw || stripHtml(entry.description || '')
+  return {
+    description: description || game.description,
+    developer: (entry.developers ?? []).map((company) => company.name).join(', ') || game.developer,
+    publisher: (entry.publishers ?? []).map((company) => company.name).join(', ') || game.publisher,
+    genres: genres.length ? genres : game.genres,
+    releaseDate: entry.released || game.releaseDate,
+    releaseYear: yearMatch ? Number(yearMatch[0]) : game.releaseYear,
+    coverPath: art.cover || game.coverPath,
+    backgroundPath: art.background || game.backgroundPath,
+    screenshots: screenshots.length ? screenshots : game.screenshots,
+    rating: typeof entry.metacritic === 'number' ? entry.metacritic : game.rating,
+    metadataProvider: 'rawg',
+    metadataConfidence: confidence,
+    extra: { ...game.extra, metadataUpdatedAt: nowIso() }
+  }
+}
+
+async function enrichFromRawg(deps: MetadataDeps, game: Game): Promise<MetadataResult> {
+  const { settings } = deps
+  if (!settings.rawgApiKey) {
+    return {
+      ok: false,
+      provider: 'rawg',
+      confidence: 0,
+      message: 'RAWG API key is not configured. Add your free key in Settings.'
+    }
+  }
+
+  const search = await rawgGet<{ results?: RawgGame[] }>(settings, '/games', {
+    search: game.title,
+    page_size: '5'
+  })
+  const results = search?.results ?? []
+  if (!results.length) {
+    return { ok: false, provider: 'rawg', confidence: 0, message: 'RAWG has no match for this title.' }
+  }
+  const best = results
+    .map((entry) => ({ entry, score: titleScore(game.title, entry.name) }))
+    .sort((a, b) => b.score - a.score)[0]
+  if (best.score <= 0) {
+    return { ok: false, provider: 'rawg', confidence: 0, message: 'RAWG returned no close title match.' }
+  }
+
+  // The detail call adds descriptions, companies and the extra hero artwork;
+  // if it fails the search result still carries enough to fill the basics.
+  const detail = (await rawgGet<RawgGame>(settings, `/games/${best.entry.id}`)) ?? best.entry
+  const shotResponse = await rawgGet<{ results?: { image: string }[] }>(
+    settings,
+    `/games/${best.entry.id}/screenshots`,
+    { page_size: '6' }
+  )
+
+  const base = `rawg-${detail.id}`
+  const backgroundSource = detail.background_image_additional || detail.background_image || ''
+  const [cover, background] = await Promise.all([
+    artFor(deps, detail.background_image || backgroundSource, `${base}-cover`),
+    artFor(deps, backgroundSource, `${base}-hero`)
+  ])
+
+  const screenshots: Screenshot[] = []
+  for (const [index, shot] of (shotResponse?.results ?? []).slice(0, 6).entries()) {
+    const local = await artFor(deps, shot.image, `${base}-shot-${index}`)
+    screenshots.push({ thumb: shot.image, full: shot.image, local: local || undefined })
+  }
+
+  const confidence = Math.min(0.9, best.score)
+  const patch = rawgGamePatch(detail, game, { cover, background }, screenshots, confidence)
+  const updated = updateGameRecord(deps.db, game.id, patch)
+  return {
+    ok: true,
+    provider: 'rawg',
+    confidence,
+    message: `Matched "${detail.name}" on RAWG with ${Math.round(confidence * 100)}% confidence.`,
+    game: updated,
+    candidates: artworkCandidates(updated)
   }
 }
 
@@ -356,6 +495,22 @@ export async function enrichGame(deps: MetadataDeps, gameId: string, force = fal
   // Honour the preferred provider: when IGDB is selected and keyed, try it
   // first and fall back to Steam for titles that carry an App ID.
   const igdbReady = Boolean(deps.settings.igdbClientId && deps.settings.igdbClientSecret)
+  const rawgReady = Boolean(deps.settings.rawgApiKey)
+
+  if (deps.settings.metadataProvider === 'rawg' && rawgReady) {
+    const rawg = await enrichFromRawg(deps, game)
+    if (rawg.ok) return rawg
+    if (game.source === 'steam' || (game.sourceId && /^\d+$/.test(game.sourceId) && game.source !== 'rom-scan')) {
+      const steam = await enrichFromSteam(deps, game, force)
+      if (steam.ok) return { ...steam, message: `${rawg.message} ${steam.message}`.trim() }
+    }
+    if (igdbReady) {
+      const igdb = await enrichFromIgdb(deps, game)
+      return { ...igdb, message: `${rawg.message} ${igdb.message}`.trim() }
+    }
+    return rawg
+  }
+
   if (deps.settings.metadataProvider === 'igdb' && igdbReady) {
     const igdb = await enrichFromIgdb(deps, game)
     if (igdb.ok) return igdb
@@ -369,23 +524,29 @@ export async function enrichGame(deps: MetadataDeps, gameId: string, force = fal
   if (game.source === 'steam' || (game.sourceId && /^\d+$/.test(game.sourceId) && game.source !== 'rom-scan')) {
     const result = await enrichFromSteam(deps, game, force)
     if (result.ok) return result
-    if (deps.settings.igdbClientId && deps.settings.igdbClientSecret) {
+    if (igdbReady) {
       const igdb = await enrichFromIgdb(deps, game)
       return { ...igdb, message: `${result.message} ${igdb.message}`.trim() }
+    }
+    if (rawgReady) {
+      const rawg = await enrichFromRawg(deps, game)
+      return { ...rawg, message: `${result.message} ${rawg.message}`.trim() }
     }
     return result
   }
 
-  if (deps.settings.igdbClientId && deps.settings.igdbClientSecret) {
-    return enrichFromIgdb(deps, game)
-  }
+  // Manually added PC titles (GOG, Epic, itch) carry no App ID. Resolve one
+  // through the keyless store search so Steam metadata can fill them too; a
+  // cached resolution from an earlier refresh avoids the extra request.
+  if (igdbReady) return enrichFromIgdb(deps, game)
+  if (rawgReady) return enrichFromRawg(deps, game)
 
   return {
     ok: false,
     provider: 'none',
     confidence: 0,
     message:
-      'No metadata provider is available for this game. Configure IGDB in Settings, or add artwork manually from disk.'
+      'No metadata provider is available for this game. Add a free RAWG or IGDB key in Settings, or add artwork manually from disk.'
   }
 }
 
