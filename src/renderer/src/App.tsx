@@ -19,6 +19,7 @@ import { GameEditor } from './components/GameEditor'
 import { IntroSplash } from './components/IntroSplash'
 import { ScanPanel } from './components/ScanPanel'
 import { LaunchNoticeCard } from './components/LaunchNoticeCard'
+import { CreditsDialog } from './components/Credits'
 import { ControllerBar, Toasts } from './components/Chrome'
 import { Button, cx } from './components/ui'
 import { useSpatialNavigation } from './lib/navigation'
@@ -235,6 +236,7 @@ function AppShell(): React.JSX.Element {
 
       <GameEditor open={addOpen} onClose={() => setAddOpen(false)} game={null} />
       <ScanPanel open={scanOpen} onClose={() => setScanOpen(false)} />
+      <CreditsDialog />
 
     </div>
   )

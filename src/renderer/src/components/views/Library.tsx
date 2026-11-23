@@ -3,6 +3,7 @@ import { Filter, Plus, SlidersHorizontal, X } from 'lucide-react'
 import type { Game } from '@shared/types'
 import { useStore } from '../../state/store'
 import { GameCard } from '../GameCard'
+import { DataSourceNote } from '../Credits'
 import { Badge, Button, EmptyState, PageHeader, Select, cx } from '../ui'
 
 type SortKey = 'title' | 'lastPlayed' | 'added' | 'playtime' | 'releaseYear' | 'rating'
@@ -209,6 +210,7 @@ export function LibraryView({ onAddGame, onScan }: { onAddGame: () => void; onSc
         <div className="mt-2.5 flex items-center gap-2 px-0.5 text-[11px] text-white/35">
           <Badge tone="dark">{filtered.length} results</Badge>
           <span>Drag-free grid · double-click a poster to launch instantly</span>
+          <DataSourceNote className="ml-auto hidden sm:block" />
         </div>
       </div>
 

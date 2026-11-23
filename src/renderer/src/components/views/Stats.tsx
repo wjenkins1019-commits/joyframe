@@ -3,6 +3,7 @@ import { Clock, Gamepad2, Heart, Trophy, Zap } from 'lucide-react'
 import { formatPlaytime, percent, relativeTime } from '../../lib/format'
 import { useStore } from '../../state/store'
 import { SmartImage } from '../Art'
+import { DataSourceNote } from '../Credits'
 import { Badge, EmptyState, PageHeader, cx } from '../ui'
 
 function Kpi({
@@ -239,6 +240,10 @@ export function StatsView(): React.JSX.Element {
             </p>
           </div>
         </div>
+      </div>
+
+      <div className="mt-5 flex justify-end px-1">
+        <DataSourceNote />
       </div>
     </div>
   )

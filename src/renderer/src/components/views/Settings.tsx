@@ -15,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Save,
+  ScrollText,
   ShieldCheck,
   Sparkles,
   Tv
@@ -52,6 +53,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
   const platforms = useStore((state) => state.platforms)
   const collections = useStore((state) => state.collections)
   const refreshSections = useStore((state) => state.refreshSections)
+  const openCredits = useStore((state) => state.openCredits)
   const refresh = useStore((state) => state.refresh)
   const [newSectionCollection, setNewSectionCollection] = useState('')
   const [draft, setDraft] = useState<PublicSettings>(settings)
@@ -553,6 +555,15 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
                 </a>
                 , as their terms require.
               </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-2"
+                icon={<ScrollText className="h-3.5 w-3.5" />}
+                onClick={openCredits}
+              >
+                Credits & data sources
+              </Button>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button

@@ -21,6 +21,7 @@ import type {
   Platform
 } from '@shared/types'
 import { api } from '../lib/api'
+import { DataSourceNote } from './Credits'
 import { formatDate, formatPlaytime, relativeTime } from '../lib/format'
 import { Badge, Button, ConfirmInline, Field, Input, Select, Textarea } from './ui'
 
@@ -195,6 +196,7 @@ export function DetailCards(props: DetailCardsProps): React.JSX.Element {
               <Badge key={collection.id}>{collection.name}</Badge>
             ))}
           </div>
+          <DataSourceNote className="mt-3" />
         </Card>
 
         {game.screenshots.length > 0 && (

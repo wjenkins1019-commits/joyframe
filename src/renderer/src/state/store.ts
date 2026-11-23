@@ -60,6 +60,9 @@ interface JoyframeState {
   openDetail: (id: string) => void
   closeDetail: () => void
   setConsoleMode: (on: boolean) => void
+  creditsOpen: boolean
+  openCredits: () => void
+  closeCredits: () => void
   setPreview: (id: string | null) => void
   notify: (message: string, tone?: Toast['tone']) => void
   dismissToast: (id: string) => void
@@ -177,6 +180,7 @@ export const useStore = create<JoyframeState>((set, get) => ({
   view: 'home',
   detailId: null,
   consoleMode: false,
+  creditsOpen: false,
   toasts: [],
   scan: null,
   previewGameId: null,
@@ -227,6 +231,8 @@ export const useStore = create<JoyframeState>((set, get) => ({
   openDetail: (id) => set({ detailId: id }),
   closeDetail: () => set({ detailId: null }),
   setConsoleMode: (on) => set({ consoleMode: on }),
+  openCredits: () => set({ creditsOpen: true }),
+  closeCredits: () => set({ creditsOpen: false }),
   setPreview: (id) => set({ previewGameId: id }),
 
   notify: (message, tone = 'info') => {

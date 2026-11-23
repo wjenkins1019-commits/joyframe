@@ -1,6 +1,7 @@
 import { FolderSearch, Gamepad2, Plus, Sparkles, Star, Tv2 } from 'lucide-react'
 import { useStore } from '../../state/store'
 import { Hero } from '../Hero'
+import { DataSourceNote } from '../Credits'
 import { HomeRowSection } from '../GameRow'
 import { Button, EmptyState } from '../ui'
 
@@ -131,6 +132,7 @@ export function HomeView({ onScan, onAddGame }: { onScan: () => void; onAddGame:
           tracked
         </span>
         <span>{settings.autoPreviews ? 'Automatic previews on' : 'Previews disabled'} · Offline library ready</span>
+        <DataSourceNote className="w-full border-t border-white/5 pt-3" />
       </footer>
     </div>
   )
