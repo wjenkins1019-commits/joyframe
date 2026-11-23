@@ -35,11 +35,10 @@ export const DEFAULT_REQUEST_BUDGET: Record<MetadataProviderId, number> = {
 }
 
 export interface RequestBudget {
-  spent: Record<MetadataProviderId, number>
+  /** Counts one request against the provider, or refuses it at the cap. */
   take(provider: MetadataProviderId): boolean
-  remaining(provider: MetadataProviderId): number
-  /** True once every provider the current run can use has spent its allowance. */
-  exhausted(providers?: MetadataProviderId[]): boolean
+  /** True once every provider in this run has spent its allowance. */
+  exhausted(providers: MetadataProviderId[]): boolean
 }
 
 export function createRequestBudget(
@@ -48,16 +47,12 @@ export function createRequestBudget(
   const caps = { ...DEFAULT_REQUEST_BUDGET, ...limits }
   const spent: Record<MetadataProviderId, number> = { steam: 0, rawg: 0, igdb: 0 }
   return {
-    spent,
     take(provider) {
       if (spent[provider] >= caps[provider]) return false
       spent[provider] += 1
       return true
     },
-    remaining(provider) {
-      return Math.max(0, caps[provider] - spent[provider])
-    },
-    exhausted(providers = ['steam', 'rawg', 'igdb']) {
+    exhausted(providers) {
       return providers.every((provider) => spent[provider] >= caps[provider])
     }
   }
@@ -91,14 +86,12 @@ export function failureMessage(provider: MetadataProviderId, reason: MetadataFai
   }
 }
 
+/** Providers send Retry-After as delta-seconds; anything else waits the default. */
 function retryDelay(response: Response): number {
   const header = response.headers.get('retry-after')
-  if (!header) return RETRY_WAIT_MS
-  const seconds = Number(header)
-  if (Number.isFinite(seconds)) return Math.min(MAX_RETRY_WAIT_MS, Math.max(500, seconds * 1000))
-  const at = Date.parse(header)
-  if (!Number.isFinite(at)) return RETRY_WAIT_MS
-  return Math.min(MAX_RETRY_WAIT_MS, Math.max(500, at - Date.now()))
+  const seconds = header ? Number(header) : Number.NaN
+  if (!Number.isFinite(seconds)) return RETRY_WAIT_MS
+  return Math.min(MAX_RETRY_WAIT_MS, Math.max(500, seconds * 1000))
 }
 
 type FetchOutcome<T> = { data: T } | { reason: MetadataFailureReason }
@@ -888,18 +881,16 @@ export async function setLocalArtwork(
   return updateGameRecord(deps.db, gameId, patch)
 }
 
-export interface RefreshOptions {
-  /** Caps the provider requests for this run; a fresh budget is created otherwise. */
-  budget?: RequestBudget
-}
-
 /**
  * Refresh every game that looks incomplete, within a per-provider request
  * budget. Results are grouped by failure reason so the UI can tell a missing
  * match apart from a rejected key or a rate limit, and the run stops early
  * instead of spending the last of a provider's allowance on retries.
  */
-export async function refreshAll(deps: MetadataDeps, options: RefreshOptions = {}): Promise<MetadataRefreshSummary> {
+export async function refreshAll(
+  deps: MetadataDeps,
+  options: { /** Caps the provider requests for this run. */ budget?: RequestBudget } = {}
+): Promise<MetadataRefreshSummary> {
   const budget = options.budget ?? createRequestBudget()
   const chain = providerChain(deps.settings)
   const rows = deps.db
@@ -912,43 +903,27 @@ export async function refreshAll(deps: MetadataDeps, options: RefreshOptions = {
     noMatch: 0,
     rateLimited: 0,
     authFailed: 0,
-    offline: 0,
-    stopped: false
+    offline: 0
   }
   let processed = 0
   for (const row of rows) {
-    if (budget.exhausted(chain)) {
-      summary.stopped = true
-      break
-    }
+    if (budget.exhausted(chain)) break
     try {
       const result = await enrichGame({ ...deps, budget }, row.id, false)
-      processed += 1
       if (result.ok) {
         summary.updated += 1
       } else {
         summary.failed += 1
-        switch (result.reason) {
-          case 'auth':
-            summary.authFailed += 1
-            break
-          case 'rate-limit':
-          case 'budget':
-            summary.rateLimited += 1
-            break
-          case 'offline':
-            summary.offline += 1
-            break
-          default:
-            summary.noMatch += 1
-        }
+        if (result.reason === 'auth') summary.authFailed += 1
+        else if (result.reason === 'rate-limit' || result.reason === 'budget') summary.rateLimited += 1
+        else if (result.reason === 'offline') summary.offline += 1
+        else summary.noMatch += 1
       }
     } catch {
-      processed += 1
       summary.failed += 1
       summary.offline += 1
     }
-    await sleep(350)
+    processed += 1
   }
   summary.skipped = rows.length - processed
   return summary

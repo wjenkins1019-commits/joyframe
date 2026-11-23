@@ -370,8 +370,6 @@ export interface MetadataRefreshSummary {
   rateLimited: number
   authFailed: number
   offline: number
-  /** True when the request budget stopped the run before it reached every game. */
-  stopped: boolean
 }
 
 export interface ProviderStatus {
