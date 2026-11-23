@@ -25,7 +25,7 @@
     "verify:intro-pad": "node scripts/verify-intro-pad.ts",
     "verify:installed": "node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
-    "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad"
+    "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad"
   },
   "build": {
     "appId": "com.joyframe.launcher",

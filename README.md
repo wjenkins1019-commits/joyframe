@@ -201,7 +201,18 @@ first-run experience — the welcome screen, zero home cards/rows, an empty Libr
 emulators/scan paths through the preload API, and a newly created database with no library rows (platforms and
 settings only, empty artwork and backups). It passes `--user-data-dir` to a workspace-local profile, refuses to run
 if that path ever resolves inside the real `%APPDATA%/JOYFRAME`, and asserts the real `joyframe.db` size and mtime are
-unchanged before reporting success. A DOM probe over the remote debugging port found 142 focusable navigation elements, 107 game cards and
+unchanged before reporting success.
+
+The startup ident has its own repeatable coverage, and `npm run check` now runs it after the pad suite:
+`npm run verify:intro` proves it auto-advances untouched, is dismissed by a key press, a click or a controller button
+without activating the screen underneath, never paints in `off`, and plays exactly once in `first-run`;
+`npm run verify:intro-ui` drives the real Settings dropdown through `always → off → first-run → always`, restarting
+the app each time to prove the choice persists and the next launch follows it; and `npm run verify:intro-pad` does
+the same reach-and-step by controller only. `npm run verify:installed` repeats the ident, skip and `off` checks
+against the machine-wide copy in `C:\Program Files\JOYFRAME` (point `JOYFRAME_EXE` elsewhere to override), which is
+the only check that looks at the installed payload rather than `release/win-unpacked`.
+
+A DOM probe over the remote debugging port found 142 focusable navigation elements, 107 game cards and
 17 populated dashboard rows (Continue Playing through Recently Completed), with the hero fully rendered (Chrono Trigger,
 1995, Super Nintendo) and its artwork — plus the first shelf's cards — decoded through the packaged `jf-art://` handler.
 No renderer console errors or warnings were emitted.
@@ -253,5 +264,10 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:dist-pad` | Run the controller suite against the packaged build on a seeded demo profile |
 | `npm run verify:first-run` | Boot the packaged build on a throwaway empty profile; check the welcome screen, empty library and fresh database |
 | `npm run verify:freshness` | Exercise the packaged-build staleness guard with fixture files, without touching `release/` |
+| `npm run verify:intro` | Boot dev Electron on a throwaway profile: auto-advance, key/click/controller skip, `off`, and a seen `first-run`; then the plays-once first-run probe |
+| `npm run verify:intro-ui` | Cycle the Startup intro dropdown through every mode with real clicks and keys, restarting after each and checking disk plus launch behaviour |
+| `npm run verify:intro-pad` | Reach and step the Startup intro dropdown with the pad alone, then restart to prove the choice persisted |
+| `npm run verify:installed` | Drive the machine-wide copy (`C:\Program Files\JOYFRAME`, override with `JOYFRAME_EXE`): ident, skip without click-through, `off` |
+| `npm run check` | Typecheck, smoke, freshness guard, pad suite, then all three intro suites |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |
