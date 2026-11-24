@@ -1,0 +1,61 @@
+# The suite only proves anything if it runs. `npm run check` needs a human to
+# remember it — and the guard self-test exists precisely because guards that are
+# exercised by hand once, then never again, rot silently.
+#
+# This job is the GUI-free slice: it typechecks, proves the suite's own guards
+# still fail correctly, exercises the packaged-freshness guard with real fixture
+# archives, and runs the backend smoke test against real fixtures. The probes
+# that boot an Electron window and drive it over the DevTools protocol are not
+# here — they need an interactive desktop session — so they stay local or on a
+# self-hosted runner.
+#
+# Node is pinned to the version the suite is proven on (26): the services use
+# `node:sqlite` and the probes use the built-in `WebSocket`, both of which a
+# contributor on an older Node would only discover as a crash mid-run.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only: nothing here publishes, packages or writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-gui-checks:
+    name: typecheck, guard self-test, freshness, smoke
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+
+      # Runs the project's postinstall, which installs Electron's binary. None of
+      # the steps below launch it, but skipping it would make CI differ from the
+      # machine a developer runs on for no gain worth the divergence.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck main and renderer
+        run: npm run typecheck
+
+      - name: Prove the suite's guards still fail correctly
+        run: npm run self-test
+
+      - name: Exercise the packaged-freshness guard
+        run: npm run verify:freshness
+
+      - name: Backend smoke test
+        run: npm run smoke
