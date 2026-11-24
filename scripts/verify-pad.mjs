@@ -1027,9 +1027,14 @@ async function main() {
   const clickMs = Date.now() - reopenedAt
   await delay(500)
   const clicked = await route()
+  // The click is dispatched the moment the page exists; how long that takes is
+  // a property of the runner (a hosted Windows runner mounts it in ~0.5s versus
+  // ~40ms on a dev machine). The sampler above is what proves the button did
+  // not move, so this holds the hit-test and the one-click close, not a
+  // stopwatch that would fail on a slower machine while the app is correct.
   check(
     'one immediate click on the back button closes the game page',
-    Boolean(hit?.onButton) && clickMs < 400 && !clicked.detail,
+    Boolean(hit?.onButton) && !clicked.detail,
     `on-button=${hit?.onButton} at=${hit?.at} click=${clickMs}ms after opening detail=${clicked.detail}`
   )
 
