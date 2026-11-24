@@ -34,23 +34,21 @@ const send = (method: string, params: Record<string, unknown> = {}): Promise<Rec
 const evaluate = (expression: string): Promise<any> => session!.evaluate(expression)
 
 // Point JOYFRAME_EXE at an installed build to run this against it as well.
+const packaged = Boolean(process.env.JOYFRAME_EXE)
 const exe = process.env.JOYFRAME_EXE ?? 'node_modules/electron/dist/electron.exe'
-const appArgs = process.env.JOYFRAME_EXE ? [] : ['.']
 
 await preflight({
   label: 'verify:intro-ui',
   port,
   // A packaged exe is self-contained; only the dev build needs out/ and Electron.
-  needs: process.env.JOYFRAME_EXE
-    ? [{ file: exe, remedy: 'Point JOYFRAME_EXE at an existing packaged build, then retry.' }]
-    : DEV_BOOT_NEEDS
+  needs: packaged ? [{ file: exe, remedy: 'Point JOYFRAME_EXE at an existing packaged build, then retry.' }] : DEV_BOOT_NEEDS
 })
 // A packaged exe carries its own bundle; only the dev build has to be current.
-if (!process.env.JOYFRAME_EXE) assertBuildFresh({ label: 'verify:intro-ui' })
+if (!packaged) assertBuildFresh({ label: 'verify:intro-ui' })
 
 async function launch(): Promise<void> {
   // One log per run: every relaunch in the cycle appends to the same file.
-  app = spawn(exe, [...appArgs, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'], {
+  app = spawn(exe, [...(packaged ? [] : ['.']), `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'], {
     stdio: appLog.stdio
   })
   const target = await findWindow(port)

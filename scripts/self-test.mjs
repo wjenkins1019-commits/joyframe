@@ -4,9 +4,9 @@
  *
  * The probes are only trustworthy if the machinery that makes a short or silent
  * run fail still fails: the expected-check count, the exit-2 preflight, the
- * unfinished-run hook and the packaged-build guard. Those paths are otherwise
- * exercised by hand, once, and never again — so a guard that quietly stopped
- * working would read as a green suite.
+ * build-freshness stamp, the unfinished-run hook and the packaged-build guard.
+ * Those paths are otherwise exercised by hand, once, and never again — so a
+ * guard that quietly stopped working would read as a green suite.
  *
  *   npm run self-test
  *
@@ -22,7 +22,19 @@ import path from 'node:path'
 
 const FIXTURE = path.join('scripts', 'fixtures', 'guard-fixture.mjs')
 const ROOT = fs.mkdtempSync('.self-test-')
-const WORK = path.join(ROOT, 'stale-asar')
+const STALE = 'out/ is older than the files it was built from'
+
+/** One input edited after the build: the guard must name it and the remedy. */
+const STALE_CASES = [
+  ['stale-build', 'a src/ edit', 'main/index.ts'],
+  ['stale-config', 'a config-only edit', 'electron.vite.config.ts'],
+  ['stale-package', 'a package.json-only edit', 'package.json']
+].map(([mode, what, file]) => ({
+  mode,
+  name: `${what} makes out/ stale, naming the file and the remedy`,
+  exit: 2,
+  stderr: [STALE, file, 'npm run build']
+}))
 
 /** mode, expected exit code, and text that must (not) appear on each stream. */
 const CASES = [
@@ -50,23 +62,11 @@ const CASES = [
     exit: 2,
     stderr: ['already accepting connections', 'JF_FIXTURE_PORT']
   },
-  {
-    mode: 'stale-build',
-    name: 'an out/ older than src/ exits 2 with the changed file and the rebuild remedy',
-    exit: 2,
-    stderr: ['out/ is older than its sources', 'main/index.ts', 'npm run build']
-  },
-  {
-    mode: 'stale-config',
-    name: 'a config-only edit also makes out/ stale',
-    exit: 2,
-    stderr: ['out/ is older than its sources', 'electron.vite.config.ts', 'npm run build']
-  },
+  ...STALE_CASES,
   {
     mode: 'fresh-build',
-    name: 'an out/ stamped from the current sources still passes',
-    exit: 0,
-    stderrAbsent: ['older than src/', 'no freshness stamp']
+    name: 'an out/ stamped from the current files still passes',
+    exit: 0
   },
   {
     mode: 'missing-stamp',
@@ -105,7 +105,7 @@ const check = (name, ok, detail) => results.push({ name, ok, detail })
 
 try {
   for (const testCase of CASES) {
-    const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, WORK], { encoding: 'utf8' })
+    const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, ROOT], { encoding: 'utf8' })
     const stdout = run.stdout ?? ''
     const stderr = run.stderr ?? ''
     const missing = [

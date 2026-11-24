@@ -1,12 +1,12 @@
 /**
  * A deliberately broken probe for scripts/self-test.mjs.
  *
- * Each mode calls one guard from cdp.mjs or packaged-build.mjs and then ends in
- * the way that guard is supposed to end: a shortened list exits 1, a missing
- * prerequisite and a busy port exit 2, an unsettled run exits 13, a drained run
- * exits 0, and a stale package is refused. The self-test asserts those endings,
- * so a guard that stops working fails the suite instead of quietly passing
- * everything.
+ * Each mode calls one guard from cdp.mjs, build-fresh.mjs or packaged-build.mjs
+ * and then ends in the way that guard is supposed to end: a shortened list
+ * exits 1, a missing prerequisite, a busy port and a stale build exit 2, an
+ * unsettled run exits 13, a drained run exits 0, and a stale package is
+ * refused. The self-test asserts those endings, so a guard that stops working
+ * fails the suite instead of quietly passing everything.
  *
  * Run through node, never imported:
  *
@@ -64,24 +64,33 @@ if (mode === 'busy-port') {
   process.exit(0)
 }
 
-if (['stale-build', 'stale-config', 'fresh-build', 'missing-stamp'].includes(mode)) {
+if (['stale-build', 'stale-config', 'stale-package', 'fresh-build', 'missing-stamp'].includes(mode)) {
   if (!work) throw new Error(`${mode} needs a work directory`)
   const root = path.join(work, mode)
-  // Both inputs the real build stamps: the src/ tree and the Vite config.
-  const src = path.join(root, 'src')
-  const config = path.join(root, 'electron.vite.config.ts')
-  const out = path.join(root, 'out')
-  const stamp = path.join(root, '.build-stamp.json')
-  const inputs = [src, config]
-  fs.mkdirSync(path.join(src, 'main'), { recursive: true })
-  fs.writeFileSync(path.join(src, 'main', 'index.ts'), 'the source the build was made from')
-  fs.writeFileSync(config, 'export default {}')
-  fs.mkdirSync(out, { recursive: true })
-  if (mode !== 'missing-stamp') writeBuildStamp({ inputs, out, stamp })
+  fs.mkdirSync(root, { recursive: true })
+  // The guard uses fixed paths, so the fixture becomes the project for this run.
+  process.chdir(root)
+  const FILES = {
+    'src/main/index.ts': 'the source the build was made from',
+    'electron.vite.config.ts': 'export default {}',
+    'package.json': '{"dependencies":{"electron":"1.0.0"}}\n',
+    'package-lock.json': '{"lockfileVersion":3,"packages":{}}\n'
+  }
   // The edit nobody rebuilt: out/ now predates its inputs and must not be trusted.
-  if (mode === 'stale-build') fs.writeFileSync(path.join(src, 'main', 'index.ts'), 'an edit after the build')
-  if (mode === 'stale-config') fs.writeFileSync(config, 'export default { aliases: { patched: true } }')
-  assertBuildFresh({ label: 'guard-fixture', inputs, out, stamp })
+  const EDITS = {
+    'stale-build': ['src/main/index.ts', 'an edit after the build'],
+    'stale-config': ['electron.vite.config.ts', 'export default { aliases: { patched: true } }'],
+    // A dependency change with no rebuild: src/ and the config are untouched.
+    'stale-package': ['package.json', '{"dependencies":{"electron":"2.0.0"}}\n']
+  }
+  for (const [file, contents] of Object.entries(FILES)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, contents)
+  }
+  fs.mkdirSync('out', { recursive: true })
+  if (mode !== 'missing-stamp') writeBuildStamp()
+  if (EDITS[mode]) fs.writeFileSync(...EDITS[mode])
+  assertBuildFresh({ label: 'guard-fixture' })
   process.exit(0)
 }
 
