@@ -12,6 +12,11 @@ Built as an Electron + React + TypeScript application with a local SQLite databa
 
 ## Quick start
 
+Requires **Node 26**: the services import `node:sqlite` and the probes use the built-in `WebSocket`, both of
+which fail mid-run on an older Node. `package.json` declares it in `engines`, `.nvmrc` pins it for version
+managers, and `.npmrc` sets `engine-strict=true` — so an install on the wrong version stops with `EBADENGINE`
+and the required range instead of failing later inside a test.
+
 ```bash
 npm install
 npm run dev      # Vite + Electron with hot reload
@@ -315,3 +320,9 @@ packaged app for both its probe sets and the controller suite, and finishes by p
 byte-for-byte `release/win-unpacked`. It stops at the first failing stage and prints `CERTIFIED`, the bundle SHA-256 and
 which installer it covers only when the whole chain passed, so a green certificate cannot coexist with an installer
 nobody tested.
+
+---
+
+## License
+
+JOYFRAME is released under the [MIT License](LICENSE), copyright © 2026 965 Media.
