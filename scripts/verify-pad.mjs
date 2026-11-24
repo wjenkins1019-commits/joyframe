@@ -391,6 +391,8 @@ const EXPECTED_CHECKS = [
   'opening the detail focuses its first content item',
   'B closes the detail and stays in console mode',
   'closing the detail returns focus to the card that opened it',
+  'the game page back button does not move while the page opens',
+  'one immediate click on the back button closes the game page',
   'hiding a game returns focus once its card is gone',
   'opening the search focuses its first content item',
   'console search grid focused',
@@ -956,6 +958,76 @@ async function main() {
     'closing the detail returns focus to the card that opened it',
     detailClosed.focusCard === card.focusCard,
     `focus=${detailClosed.focusCard} expected=${card.focusCard}`
+  )
+
+  // ---- The back button must not move while the game page opens -----------
+  // The page used to translate in, so the button slid upward for half a second
+  // and the first click landed where it had been, not where it was. Record its
+  // position every frame from before opening, then click its settled position
+  // immediately after a reopen: a page that moves loses the click and fails.
+  await evaluate(`(() => {
+    window.__backSamples = []
+    const started = performance.now()
+    const tick = () => {
+      const button = [...document.querySelectorAll('[data-jf-detail="1"] button')].find((b) => b.innerText.includes('Back to library'))
+      if (button) window.__backSamples.push(button.getBoundingClientRect().top)
+      if (performance.now() - started < 1600) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+    return true
+  })()`)
+  await press(0, 220) // A opens the focused card
+  await delay(1600)
+  const samples = (await evaluate('window.__backSamples.slice()')) ?? []
+  const spread = samples.length ? Math.max(...samples) - Math.min(...samples) : Infinity
+  check(
+    'the game page back button does not move while the page opens',
+    samples.length >= 20 && spread < 1,
+    `${samples.length} frames, ${spread.toFixed(1)}px spread`
+  )
+  const backButton = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('[data-jf-detail="1"] button')].find((b) => b.innerText.includes('Back to library'))
+    if (!button) return null
+    const rect = button.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, top: rect.top }
+  })()`)
+  await press(1, 220) // B closes it again
+  // Reopen with the mouse and click back as soon as the page exists, so the
+  // click lands inside the window the old animation took to settle.
+  const cardPoint = await evaluate(`(() => {
+    const card = document.querySelector('[data-nav-focus]')
+    if (!card) return null
+    card.scrollIntoView({ block: 'center' })
+    const rect = card.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  })()`)
+  const reopenedAt = Date.now()
+  await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cardPoint.x, y: cardPoint.y, button: 'none', clickCount: 0 })
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: cardPoint.x, y: cardPoint.y, button: 'left', clickCount: 1 })
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cardPoint.x, y: cardPoint.y, button: 'left', clickCount: 1 })
+  let pageOpened = false
+  for (let attempt = 0; attempt < 60 && !pageOpened; attempt++) {
+    pageOpened = await evaluate(`Boolean(document.querySelector('[data-jf-detail="1"]'))`)
+  }
+  const hit = pageOpened
+    ? await evaluate(`(() => {
+        const button = [...document.querySelectorAll('[data-jf-detail="1"] button')].find((b) => b.innerText.includes('Back to library'))
+        const top = document.elementFromPoint(${backButton.x}, ${backButton.top + 3})
+        return { onButton: Boolean(button && top && (top === button || button.contains(top))), at: top?.tagName ?? null }
+      })()`)
+    : null
+  // Click three pixels below the settled top edge, where a page still sliding
+  // up would no longer have its button.
+  await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: backButton.x, y: backButton.top + 3, button: 'none', clickCount: 0 })
+  await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: backButton.x, y: backButton.top + 3, button: 'left', clickCount: 1 })
+  await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: backButton.x, y: backButton.top + 3, button: 'left', clickCount: 1 })
+  const clickMs = Date.now() - reopenedAt
+  await delay(500)
+  const clicked = await route()
+  check(
+    'one immediate click on the back button closes the game page',
+    Boolean(hit?.onButton) && clickMs < 400 && !clicked.detail,
+    `on-button=${hit?.onButton} at=${hit?.at} click=${clickMs}ms after opening detail=${clicked.detail}`
   )
 
   // ---- A layer whose opening control unmounts ----------------------------
