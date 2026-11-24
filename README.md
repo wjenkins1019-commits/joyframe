@@ -179,14 +179,15 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 ## Verification performed
 
-`npm run smoke` executes **46 checks against the real services** and passes:
+`npm run smoke` executes **47 checks against the real services** and passes:
 
 - PC folder scan importing one game per folder, filtering installers/redistributables/crash handlers, choosing the
   executable that matches the folder, and skipping duplicates on rescan.
 - ROM scan detecting NES/SNES/GBA/PS2/PS1 from extensions and folder hints, grouping CUE/BIN, ignoring BIOS files and
   non-ROM files, remaining idempotent across rescans.
 - Emulator configuration validation (valid core, missing core), `{rom}`/`{core}` substitution, and the ROM being
-  appended when a template omits it (with the per-game opt-out).
+  appended when a template omits it (with the per-game opt-out) — proven at runtime by a stub emulator that records
+  the argument list it is actually launched with.
 - VDF parsing, Steam detection via a synthetic library, manifest import with installed state and 120 minutes of local
   playtime, plus uninstalled apps.
 - Collections, favorites/completion rows, home sections, search/filters, statistics.

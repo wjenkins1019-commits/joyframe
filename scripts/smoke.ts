@@ -398,6 +398,37 @@ await check('Launcher spawns a process, tracks it and records playtime', async (
   assert.equal(updated.playCount, 1)
 })
 
+await check('A launched emulator receives the appended ROM argument', async () => {
+  const rom = queryGames(db, { search: 'Super Mario Bros' }, true)[0]
+  const record = path.join(emulatorDir, 'stub-args.json')
+  const stub = path.join(emulatorDir, 'stub-emulator.mjs')
+  write(stub, `import fs from 'node:fs'\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify(process.argv.slice(2)))\n`)
+  // The template never mentions {rom}, exactly like a hand-written emulator
+  // entry, so only the launcher's append can put the ROM on the command line.
+  const bare = addEmulator(db, {
+    name: 'Stub Emulator',
+    path: process.execPath,
+    platformIds: ['nes'],
+    argsTemplate: `"${stub}"`
+  })
+  updateGameRecord(db, rom.id, { emulatorId: bare.id, emulatorCore: '', launchArgs: '' })
+
+  fs.rmSync(record, { force: true })
+  const launcher = new Launcher(db, {
+    emit: () => undefined,
+    openExternal: async () => undefined,
+    settings: () => getSettings(db)
+  })
+  const result = await launcher.launch(rom.id)
+  assert.equal(result.ok, true, result.message)
+
+  const deadline = Date.now() + 10_000
+  while (!fs.existsSync(record) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.ok(fs.existsSync(record), 'the stub emulator never ran')
+  const args = JSON.parse(fs.readFileSync(record, 'utf8')) as string[]
+  assert.deepEqual(args, [rom.romPath], `stub received ${JSON.stringify(args)}`)
+})
+
 await check('Protocol launch is observable and cancelable before the game appears', async () => {
   const tf2 = queryGames(db, { search: 'Team Fortress' }, true)[0]
   assert.ok(tf2, 'Steam fixture missing')
