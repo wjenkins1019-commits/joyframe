@@ -1,0 +1,15 @@
+# Every text file is stored and checked out with LF, on Windows too. Without
+# this, `core.autocrlf` rewrote lines on checkout and every commit warned that
+# LF would become CRLF — the same file differing by nothing but its line endings
+# is exactly the whole-file diff this prevents.
+* text=auto eol=lf
+
+# Rendered brand assets: never normalise, diff or merge them as text.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
