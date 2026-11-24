@@ -34,6 +34,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { reportUnfinishedRun } from './cdp.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
 const DIST = process.argv.includes('--dist')
@@ -42,6 +43,7 @@ const PROFILE = DIST ? '.verify-pad-dist' : '.verify-pad'
 const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const SHOT_DIR = '.verify-shots'
+const finishRun = reportUnfinishedRun('verify:pad')
 
 /** Captures are per-run artifacts, so keep them out of the tracked shots/ folder. */
 function saveShot(name, data) {
@@ -58,7 +60,13 @@ function removeProfile() {
   }
 }
 
-/** Minimal CDP client over the built-in WebSocket (Node 22+). */
+/**
+ * Minimal CDP client over the built-in WebSocket (Node 22+).
+ *
+ * Every call settles. If the app's window goes away the socket closes, and a
+ * command left pending would otherwise drain the event loop and end the run
+ * with 0 — a silent green — instead of reporting the app that vanished.
+ */
 async function connect(debuggerUrl) {
   const socket = new WebSocket(debuggerUrl)
   await new Promise((resolve, reject) => {
@@ -70,17 +78,42 @@ async function connect(debuggerUrl) {
 
   const pending = new Map()
   let nextId = 0
+  let closed = null
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
-    pending.get(message.id)?.(message)
+    const entry = pending.get(message.id)
+    if (!entry) return
     pending.delete(message.id)
+    clearTimeout(entry.timer)
+    entry.resolve(message)
   })
-  return (method, params = {}) =>
-    new Promise((resolve) => {
+  socket.addEventListener('close', () => {
+    closed = 'the app closed the DevTools connection (its window closed or the process exited)'
+    if (!pending.size) return
+    process.stderr.write(`\n[verify:pad] ${closed} while ${pending.size} command(s) were in flight.\n`)
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer)
+      entry.reject(new Error(closed))
+    }
+    pending.clear()
+  })
+
+  const call = (method, params = {}, timeout = 30000) => {
+    if (closed) return Promise.reject(new Error(`DevTools ${method} never ran: ${closed}`))
+    return new Promise((resolve, reject) => {
       const id = ++nextId
-      pending.set(id, resolve)
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        process.stderr.write(`\n[verify:pad] ${method} went unanswered for ${timeout}ms.\n`)
+        reject(new Error(`DevTools did not answer ${method} within ${timeout}ms — the renderer stopped responding`))
+      }, timeout)
+      timer.unref?.()
+      pending.set(id, { resolve, reject, timer })
       socket.send(JSON.stringify({ id, method, params }))
     })
+  }
+  call.socketLost = () => closed !== null
+  return call
 }
 
 /** Reads the panel through the data hooks ControllerDiagnostics exposes for this script. */
@@ -392,7 +425,9 @@ async function main() {
     while (Date.now() < deadline) {
       try {
         if (await evaluate(expression)) return true
-      } catch {
+      } catch (error) {
+        // A closed socket never recovers, so retrying only delays the report.
+        if (call.socketLost()) throw error
         /* renderer still starting */
       }
       await delay(200)
@@ -1008,6 +1043,7 @@ async function main() {
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
   }
   console.log(`\n${results.length - failed.length}/${results.length} controller checks passed.`)
+  finishRun()
 
   const exited = app.exitCode === null ? new Promise((resolve) => app.once('exit', resolve)) : Promise.resolve()
   app.kill()

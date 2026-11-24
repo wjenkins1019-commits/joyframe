@@ -9,7 +9,42 @@ import fs from 'node:fs'
 
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Minimal CDP client over the built-in WebSocket (Node 22+). */
+/** How long one DevTools command may go unanswered before the probe gives up. */
+const CALL_TIMEOUT_MS = 30000
+
+/**
+ * A probe that never reaches its summary must say so. Node ends an unsettled
+ * top-level await with exit code 13 and a bare warning, which is indistinguishable
+ * from a silent failure inside `npm run check`, and a probe that drains its event
+ * loop can end with 0. Both would otherwise pass for a truncated run.
+ *
+ * Call the returned function once the probe has printed its result.
+ */
+export function reportUnfinishedRun(label) {
+  let finished = false
+  process.on('exit', (code) => {
+    // A thrown error already explains itself; only unannounced endings need this.
+    if (finished || (code !== 0 && code !== 13)) return
+    fs.writeSync(
+      2,
+      `\n${label} ended with exit code ${code} before printing its result — the run did not finish.\n` +
+        'The app window most likely closed or exited while a probe was waiting on it.\n'
+    )
+  })
+  return () => {
+    finished = true
+  }
+}
+
+/**
+ * Minimal CDP client over the built-in WebSocket (Node 22+).
+ *
+ * Every call settles: if the app's window goes away the socket closes, and an
+ * unresolved command would otherwise leave the awaiting probe hanging until Node
+ * exits with a bare code 13. Closing the socket fails the calls in flight with
+ * the reason, and a command that is never answered times out, so a probe reports
+ * which app and which stage went quiet instead of ending silently.
+ */
 export async function connect(debuggerUrl) {
   const socket = new WebSocket(debuggerUrl)
   await new Promise((resolve, reject) => {
@@ -22,25 +57,52 @@ export async function connect(debuggerUrl) {
   const pending = new Map()
   const events = []
   let nextId = 0
+  let closed = null
+
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
-    if (message.id) {
-      pending.get(message.id)?.(message)
-      pending.delete(message.id)
-    } else {
+    if (!message.id) {
       events.push(message)
+      return
     }
+    const entry = pending.get(message.id)
+    if (!entry) return
+    pending.delete(message.id)
+    clearTimeout(entry.timer)
+    entry.resolve(message)
+  })
+
+  socket.addEventListener('close', () => {
+    closed = 'the app closed the DevTools connection (its window closed or the process exited)'
+    if (!pending.size) return
+    // Name the cause on stderr too: probes that tolerate transient reload errors
+    // catch the rejection, and the reason would be lost with it.
+    fs.writeSync(2, `\n[cdp] ${closed} while ${pending.size} command(s) were in flight.\n`)
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer)
+      entry.reject(new Error(closed))
+    }
+    pending.clear()
   })
 
   return {
     events,
     close: () => socket.close(),
-    call: (method, params = {}) =>
-      new Promise((resolve) => {
+    call: (method, params = {}, timeout = CALL_TIMEOUT_MS) => {
+      if (closed) return Promise.reject(new Error(`DevTools ${method} never ran: ${closed}`))
+      return new Promise((resolve, reject) => {
         const id = ++nextId
-        pending.set(id, resolve)
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          fs.writeSync(2, `\n[cdp] ${method} went unanswered for ${timeout}ms.\n`)
+          reject(new Error(`DevTools did not answer ${method} within ${timeout}ms — the renderer stopped responding`))
+        }, timeout)
+        // The timeout is a failure report, not work worth keeping the process alive for.
+        timer.unref?.()
+        pending.set(id, { resolve, reject, timer })
         socket.send(JSON.stringify({ id, method, params }))
       })
+    }
   }
 }
 

@@ -15,7 +15,9 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow } from './cdp.mjs'
+import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+
+const finishRun = reportUnfinishedRun('verify:intro (ident)')
 
 const profile = path.resolve('.verify-intro/intro-profile')
 fs.rmSync(profile, { recursive: true, force: true })
@@ -161,3 +163,4 @@ await delay(900)
 try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
 
 console.log(`PASS intro ${results.join(' + ')}`)
+finishRun()

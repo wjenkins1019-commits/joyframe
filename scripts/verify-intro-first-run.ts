@@ -11,7 +11,9 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow } from './cdp.mjs'
+import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+
+const finishRun = reportUnfinishedRun('verify:intro (first-run)')
 import { openDatabase } from '../src/main/services/db.ts'
 import { getMeta, updateSettings } from '../src/main/services/settings.ts'
 
@@ -83,3 +85,4 @@ try {
   /* profile still locked is harmless */
 }
 console.log('PASS first-run mode plays once and never again')
+finishRun()

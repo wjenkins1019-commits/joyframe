@@ -16,7 +16,9 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow } from './cdp.mjs'
+import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+
+const finishRun = reportUnfinishedRun('verify:intro-pad')
 import { openDatabase } from '../src/main/services/db.ts'
 import { getSettings } from '../src/main/services/settings.ts'
 
@@ -288,3 +290,4 @@ try {
   /* locked */
 }
 console.log('PASS pad reaches the Startup intro dropdown, steps it, and the mode survives a restart')
+finishRun()
