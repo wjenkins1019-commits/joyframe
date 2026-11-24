@@ -85,6 +85,12 @@ function resolveEmulator(
   if (core && emulator.coreDir && !path.isAbsolute(core)) corePath = path.join(emulator.coreDir, core)
 
   const template = templateOverride || game.launchArgs || emulator.argsTemplate || '"{rom}"'
+  // A template that never mentions the ROM starts the emulator on its own
+  // empty window, which is what "launch" must not do: the button is for the
+  // game. The ROM is appended as a last argument unless this game asked to
+  // open the emulator bare, so an old or hand-written template cannot quietly
+  // turn a game launch into an emulator launch.
+  const passesRom = /\{rom\}/.test(template)
   const expanded = template
     .replace(/\{rom\}/g, game.romPath)
     .replace(/\{core\}/g, corePath)
@@ -93,9 +99,12 @@ function resolveEmulator(
     .replace(/\{stateSlot\}/g, String(game.extra.saveStateSlot ?? ''))
     .replace(/\{title\}/g, game.title)
 
+  const args = splitArgs(expanded)
+  if (!passesRom && game.extra.launchRomDirectly !== false) args.push(game.romPath)
+
   return {
     exe: emulator.path,
-    args: splitArgs(expanded),
+    args,
     cwd: path.dirname(emulator.path)
   }
 }

@@ -34,6 +34,7 @@ export interface ProfileState {
   displayMode: string
   saveStateMode: 'none' | 'auto' | 'manual'
   saveStateSlot: string
+  launchRomDirectly: boolean
 }
 
 export interface MethodForm {
@@ -468,6 +469,22 @@ export function DetailCards(props: DetailCardsProps): React.JSX.Element {
               <Field label="Launch arguments">
                 <Input value={profile.launchArgs} onChange={(event) => setProfile({ ...profile, launchArgs: event.target.value })} placeholder="Overrides emulator args" />
               </Field>
+              <label className="flex items-start gap-2 rounded-lg border border-white/8 bg-white/3 px-2.5 py-2 text-[11px] leading-relaxed text-jf-muted">
+                <input
+                  type="checkbox"
+                  data-nav="1"
+                  checked={profile.launchRomDirectly}
+                  onChange={(event) => setProfile({ ...profile, launchRomDirectly: event.target.checked })}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-jf-red"
+                />
+                <span>
+                  <span className="font-semibold text-white/80">Launch the ROM directly</span>
+                  <span className="block">
+                    Passes the ROM to the emulator even when the arguments never mention <code>{'{rom}'}</code>. Turn it off to open
+                    the emulator on its own.
+                  </span>
+                </span>
+              </label>
               <div className="grid grid-cols-2 gap-2">
                 <Field label="Controller profile">
                   <Input value={profile.controllerProfile} onChange={(event) => setProfile({ ...profile, controllerProfile: event.target.value })} placeholder="e.g. Xbox pad" />

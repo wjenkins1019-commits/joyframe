@@ -93,6 +93,8 @@ export interface GameExtra {
   audioDevice?: string
   saveStateSlot?: string
   saveStateMode?: 'none' | 'auto' | 'manual'
+  /** Pass the ROM to the emulator even when its arguments never mention it. Default on. */
+  launchRomDirectly?: boolean
   previewEnabled?: boolean
   launchOverrides?: Record<string, string>
   coverChoice?: string

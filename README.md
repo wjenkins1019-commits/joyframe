@@ -100,7 +100,9 @@ npm run smoke
 
 - Detects 30+ emulators in common install locations and maps each to its platforms, core folder, argument template
   and save-state folder.
-- RetroArch core mapping per platform, `{rom}` / `{core}` / `{game}` / `{dir}` / `{stateSlot}` placeholders.
+- RetroArch core mapping per platform, `{rom}` / `{core}` / `{game}` / `{dir}` / `{stateSlot}` placeholders. When a game's
+  arguments never mention `{rom}` the ROM is appended anyway, so the emulator opens the game rather than an empty window;
+  each game can switch that off with “Launch the ROM directly”.
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
   BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
 - One file per game: when a title exists in several formats in the same folder only the preferred one imports.
@@ -177,13 +179,14 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 ## Verification performed
 
-`npm run smoke` executes **45 checks against the real services** and passes:
+`npm run smoke` executes **46 checks against the real services** and passes:
 
 - PC folder scan importing one game per folder, filtering installers/redistributables/crash handlers, choosing the
   executable that matches the folder, and skipping duplicates on rescan.
 - ROM scan detecting NES/SNES/GBA/PS2/PS1 from extensions and folder hints, grouping CUE/BIN, ignoring BIOS files and
   non-ROM files, remaining idempotent across rescans.
-- Emulator configuration validation (valid core, missing core) and `{rom}`/`{core}` substitution in the launch command.
+- Emulator configuration validation (valid core, missing core), `{rom}`/`{core}` substitution, and the ROM being
+  appended when a template omits it (with the per-game opt-out).
 - VDF parsing, Steam detection via a synthetic library, manifest import with installed state and 120 minutes of local
   playtime, plus uninstalled apps.
 - Collections, favorites/completion rows, home sections, search/filters, statistics.

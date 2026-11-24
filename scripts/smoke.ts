@@ -225,6 +225,19 @@ await check('Launch command substitutes ROM and core tokens', () => {
   assert.ok(command.args.some((arg) => arg.includes('snes9x_libretro.dll')))
 })
 
+await check('Launch command appends the ROM when the template never mentions it', () => {
+  const barePath = path.join(emulatorDir, 'bare', 'bare.exe')
+  write(barePath, 'MZ', 1024)
+  const bare = addEmulator(db, { name: 'Bare Emulator', path: barePath, platformIds: ['snes'], argsTemplate: '--fullscreen' })
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: bare.id, launchArgs: '', launchMethods: [] }
+
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', chrono.romPath])
+  // The switch is the opt-out for opening the emulator's own window instead.
+  const bareOnly = { ...game, extra: { ...game.extra, launchRomDirectly: false } }
+  assert.deepEqual(buildLaunchCommand(db, bareOnly).args, ['--fullscreen'])
+})
+
 console.log('\n[3] Steam integration')
 const steamRoot = path.join(root, 'steam')
 const escaped = steamRoot.replace(/\\/g, '\\\\')

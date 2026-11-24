@@ -68,7 +68,8 @@ export function GameDetail(): React.JSX.Element | null {
       resolution: String(game.extra.resolution ?? ''),
       displayMode: String(game.extra.displayMode ?? ''),
       saveStateMode: (game.extra.saveStateMode as ProfileState['saveStateMode']) ?? 'none',
-      saveStateSlot: String(game.extra.saveStateSlot ?? '')
+      saveStateSlot: String(game.extra.saveStateSlot ?? ''),
+      launchRomDirectly: game.extra.launchRomDirectly !== false
     })
     setProfileSaved(false)
   }, [game?.id, game?.updatedAt])
@@ -166,7 +167,8 @@ export function GameDetail(): React.JSX.Element | null {
           resolution: profile.resolution,
           displayMode: profile.displayMode,
           saveStateMode: profile.saveStateMode,
-          saveStateSlot: profile.saveStateSlot
+          saveStateSlot: profile.saveStateSlot,
+          launchRomDirectly: profile.launchRomDirectly
         }
       })
       await refresh()
