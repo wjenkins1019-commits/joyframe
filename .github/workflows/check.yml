@@ -59,3 +59,35 @@ jobs:
 
       - name: Backend smoke test
         run: npm run smoke
+
+  # `npm run dist` is the only step that proves the tracked brand assets reach a
+  # real package, and nothing in CI ran it — so a clean checkout could package
+  # the default Electron icon while every other job stayed green. It is a later
+  # stage than the checks above: a package made from a tree that failed them
+  # says nothing worth trusting, so this waits for them.
+  installer:
+    name: installer built from the project's icons
+    runs-on: windows-latest
+    needs: no-gui-checks
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The log is the only place electron-builder admits it substituted the
+      # fallback icon, so keep its exit status through the pipe and save it.
+      - name: Build the Windows installer
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run dist 2>&1 | tee dist.log
+
+      - name: Prove the installer used the project icon
+        run: npm run verify:installer
