@@ -884,6 +884,9 @@ async function main() {
   )
 
   // The pad that took the hold is pinned now, so one tap must be exactly one step.
+  // Start from the row start: the handover can leave focus on the last card
+  // that fits the window, where stepping right changes rows and moves x left.
+  await walk('ArrowLeft')
   const afterSwitch = (await readFocus())?.x ?? 0
   await clearLog()
   await evaluate('(window.__setPad(0, 15, true), true)')
@@ -894,7 +897,7 @@ async function main() {
   check(
     'the pad that took the hold taps exactly one step',
     switchTap.length === 1 && switchTap[0].x > afterSwitch,
-    `moves=${switchTap.length} gaps=${gaps(switchTap)}`
+    `moves=${switchTap.length} from=${afterSwitch} to=${switchTap.map((entry) => entry.x).join(',')} gaps=${gaps(switchTap)}`
   )
 
   // ---- Unplugging mid-hold, then reconnecting -----------------------------
