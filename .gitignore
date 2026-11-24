@@ -9,6 +9,7 @@ release/
 .verify-pad-dist/
 .verify-shots/
 .freshness-check-*/
+.self-test-*/
 .demo/
 .legacy/
 .verify-dist/

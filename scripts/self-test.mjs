@@ -1,0 +1,113 @@
+#!/usr/bin/env node
+/**
+ * Self-test for the suite's own guards.
+ *
+ * The probes are only trustworthy if the machinery that makes a short or silent
+ * run fail still fails: the expected-check count, the exit-2 preflight, the
+ * unfinished-run hook and the packaged-build guard. Those paths are otherwise
+ * exercised by hand, once, and never again — so a guard that quietly stopped
+ * working would read as a green suite.
+ *
+ *   npm run self-test
+ *
+ * Each case runs scripts/fixtures/guard-fixture.mjs in a child process and
+ * asserts the exit code and the message it prints, so no guard has to be broken
+ * in a real probe to prove the reporting still works. `npm run verify:freshness`
+ * remains the deeper matrix for the build comparison; this only proves its
+ * failure path is still reached.
+ */
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+
+const FIXTURE = path.join('scripts', 'fixtures', 'guard-fixture.mjs')
+const ROOT = fs.mkdtempSync('.self-test-')
+const WORK = path.join(ROOT, 'stale-asar')
+
+/** mode, expected exit code, and text that must (not) appear on each stream. */
+const CASES = [
+  {
+    mode: 'short-list',
+    name: 'a shortened check list fails instead of printing a pass',
+    exit: 1,
+    stdout: ['FAIL  2 of 3 guard checks ran']
+  },
+  {
+    mode: 'complete-list',
+    name: 'a complete check list still passes',
+    exit: 0,
+    stdout: ['2/2 guard checks passed']
+  },
+  {
+    mode: 'missing-prereq',
+    name: 'a missing prerequisite exits 2 with the file and its remedy',
+    exit: 2,
+    stderr: ['environment not ready', 'C:/definitely-not-here/JOYFRAME.exe is missing', 'npm run nope']
+  },
+  {
+    mode: 'busy-port',
+    name: 'a busy debugging port exits 2 and names the override',
+    exit: 2,
+    stderr: ['already accepting connections', 'JF_FIXTURE_PORT']
+  },
+  {
+    mode: 'unfinished',
+    name: 'an unsettled run exits 13 and says it did not finish',
+    exit: 13,
+    stderr: ['did not finish']
+  },
+  {
+    mode: 'silent-zero',
+    name: 'a drained run that exits 0 is reported too',
+    exit: 0,
+    stderr: ['did not finish']
+  },
+  {
+    mode: 'finished',
+    name: 'a finished failure is not reported as unfinished',
+    exit: 1,
+    stderrAbsent: ['did not finish']
+  },
+  {
+    mode: 'stale-asar',
+    name: 'a stale package is refused with the repackage remedy',
+    exit: 1,
+    stderr: ['Packaged build is stale', 'npm run dist']
+  }
+]
+
+const results = []
+const check = (name, ok, detail) => results.push({ name, ok, detail })
+
+try {
+  for (const testCase of CASES) {
+    const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, WORK], { encoding: 'utf8' })
+    const stdout = run.stdout ?? ''
+    const stderr = run.stderr ?? ''
+    const missing = [
+      ...(testCase.stdout ?? []).filter((text) => !stdout.includes(text)),
+      ...(testCase.stderr ?? []).filter((text) => !stderr.includes(text))
+    ]
+    const unexpected = (testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text))
+    const problems = []
+    if (run.status !== testCase.exit) problems.push(`exit ${run.status}, expected ${testCase.exit}`)
+    if (missing.length) problems.push(`missing from output: ${missing.join(' | ')}`)
+    if (unexpected.length) problems.push(`should not have printed: ${unexpected.join(' | ')}`)
+    check(
+      testCase.name,
+      problems.length === 0,
+      problems.length
+        ? problems.join('; ')
+        : `exit ${run.status}${stderr.trim() ? ` — ${stderr.trim().split(/\r?\n/).find((line) => line.trim())}` : ''}`
+    )
+  }
+} finally {
+  fs.rmSync(ROOT, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
+
+for (const result of results) {
+  console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
+}
+const failed = results.filter((result) => !result.ok).length
+console.log(`\n${results.length - failed}/${results.length} guard self-checks passed.`)
+process.exit(failed ? 1 : 0)

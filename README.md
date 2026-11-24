@@ -294,8 +294,10 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:intro-pad` | Reach and step the Startup intro dropdown with the pad alone, then restart to prove the choice persisted |
 | `npm run verify:installed-build` | Fail when `C:\Program Files\JOYFRAME` is not byte-for-byte the build in `release/win-unpacked` |
 | `npm run verify:installed` | Check that integrity, then drive the machine-wide copy (`JOYFRAME_EXE` overrides the exe): ident, skip without click-through, `off` |
-| `npm run check` | Typecheck, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
-| `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` — the final step after a release |
+| `npm run self-test` | Prove the suite's own guards still fail correctly: short check list, exit `2` on a missing prerequisite and on a busy port, unfinished-run reporting, stale package |
+| `npm run check` | Typecheck, guard self-test, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
+| `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` |
+| `npm run certify` | Certify the shipped artifact: `check`, build, `dist`, both packaged probes, `verify:dist-pad`, then `verify:installed-build`; prints `CERTIFIED` with the bundle's SHA-256 only when every stage passed |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |
 
@@ -303,3 +305,10 @@ Each probe boots a real app, so it captures that app's own stdout/stderr in `.ve
 tail when a run fails. Before booting, a probe also checks the binary it drives and its debugging port: a missing build,
 a missing Electron binary or a port a leftover instance still holds exits with code `2` and the fix, so exit `1` always
 means the app regressed.
+
+`npm run check` covers the dev build only, so it can be green while the installer is stale — it reports that comparison
+without failing on it. `npm run certify` is the release signal: it runs `check`, then builds, packages, boots the
+packaged app for both its probe sets and the controller suite, and finishes by proving `C:\Program Files\JOYFRAME` is
+byte-for-byte `release/win-unpacked`. It stops at the first failing stage and prints `CERTIFIED`, the bundle SHA-256 and
+which installer it covers only when the whole chain passed, so a green certificate cannot coexist with an installer
+nobody tested.

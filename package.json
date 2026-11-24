@@ -26,8 +26,10 @@
     "verify:installed-build": "node scripts/verify-installed-build.mjs",
     "verify:installed": "node scripts/verify-installed-build.mjs && node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
-    "check": "npm run typecheck && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad && node scripts/report-packaged-freshness.mjs",
-    "check:installed": "npm run check && npm run verify:installed-build"
+    "self-test": "node scripts/self-test.mjs",
+    "check": "npm run typecheck && npm run self-test && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad && node scripts/report-packaged-freshness.mjs",
+    "check:installed": "npm run check && npm run verify:installed-build",
+    "certify": "node scripts/certify.mjs"
   },
   "build": {
     "appId": "com.joyframe.launcher",
