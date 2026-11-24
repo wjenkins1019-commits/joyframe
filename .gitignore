@@ -18,12 +18,4 @@ release/
 .verify-intro/
 .verify-logs/
 .DS_Store
-resources/icon.ico
-resources/icon-512.png
-resources/icon-256.png
-resources/icon-128.png
-resources/icon-64.png
-resources/icon-32.png
-resources/logo-wordmark.png
-resources/splash.png
 resources/wordmark.png

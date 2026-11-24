@@ -22,7 +22,9 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "smoke": "node scripts/smoke.ts",
     "icons": "node scripts/gen-icons.mjs",
+    "verify:icons": "node scripts/gen-icons.mjs --check",
     "dist": "npm run build && electron-builder --win nsis",
+    "predist": "npm run verify:icons",
     "verify:pad": "node scripts/verify-pad.mjs",
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify:dist-pad": "node scripts/verify-pad.mjs --dist",
@@ -34,7 +36,7 @@
     "verify:installed": "node scripts/verify-installed-build.mjs && node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
     "self-test": "node scripts/self-test.mjs",
-    "check": "npm run typecheck && npm run self-test && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad && node scripts/report-packaged-freshness.mjs",
+    "check": "npm run typecheck && npm run self-test && npm run verify:icons && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad && node scripts/report-packaged-freshness.mjs",
     "check:installed": "npm run check && npm run verify:installed-build",
     "certify": "node scripts/certify.mjs"
   },
