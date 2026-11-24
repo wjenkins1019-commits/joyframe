@@ -23,7 +23,7 @@
     "smoke": "node scripts/smoke.ts",
     "icons": "node scripts/gen-icons.mjs",
     "verify:icons": "node scripts/gen-icons.mjs --check",
-    "dist": "npm run build && electron-builder --win nsis",
+    "dist": "npm run build && electron-builder --win nsis --publish never",
     "predist": "npm run verify:icons",
     "verify:pad": "node scripts/verify-pad.mjs",
     "verify:dist": "node scripts/verify-dist.mjs",
