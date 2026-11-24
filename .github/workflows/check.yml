@@ -2,12 +2,16 @@
 # remember it — and the guard self-test exists precisely because guards that are
 # exercised by hand once, then never again, rot silently.
 #
-# This job is the GUI-free slice: it typechecks, proves the suite's own guards
-# still fail correctly, exercises the packaged-freshness guard with real fixture
-# archives, and runs the backend smoke test against real fixtures. The probes
-# that boot an Electron window and drive it over the DevTools protocol are not
-# here — they need an interactive desktop session — so they stay local or on a
-# self-hosted runner.
+# The no-GUI job typechecks, proves the suite's own guards still fail correctly,
+# exercises the packaged-freshness guard with real fixture archives, and runs
+# the backend smoke test against real fixtures.
+#
+# The controller job boots Electron and drives the renderer over the DevTools
+# protocol with a virtual pad. windows-latest provides an interactive desktop
+# session, so those probes do not need a self-hosted runner. This is the job
+# that holds the game page's back-button checks, which is why it cannot stay a
+# local-only command. Probes that need a packaged or installed build still run
+# through `npm run certify` on a machine that has one.
 #
 # Node is pinned to the version the suite is proven on (26): the services use
 # `node:sqlite` and the probes use the built-in `WebSocket`, both of which a
@@ -60,6 +64,30 @@ jobs:
       - name: Backend smoke test
         run: npm run smoke
 
+  # The controller suite is the only coverage of the game page's back button:
+  # the page has to appear without moving, and one immediate click has to close
+  # it. Both are regressions that shipped once, so the suite runs on every push
+  # instead of only when someone remembers `npm run verify:pad`.
+  controller-checks:
+    name: controller suite (virtual gamepad)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Builds out/ itself, seeds a throwaway profile, then drives the real
+      # renderer with a fake standard-mapping pad and real DevTools input.
+      - name: Controller suite
+        run: npm run verify:pad
+
   # `npm run dist` is the only step that proves the tracked brand assets reach a
   # real package, and nothing in CI ran it — so a clean checkout could package
   # the default Electron icon while every other job stayed green. It is a later
@@ -68,7 +96,7 @@ jobs:
   installer:
     name: installer built from the project's icons
     runs-on: windows-latest
-    needs: no-gui-checks
+    needs: [no-gui-checks, controller-checks]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
