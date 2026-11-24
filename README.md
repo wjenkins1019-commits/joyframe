@@ -303,8 +303,10 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run check` | Typecheck, guard self-test, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
 | `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` |
 | `npm run certify` | Certify the shipped artifact: `check`, build, `dist`, both packaged probes, `verify:dist-pad`, then `verify:installed-build`; prints `CERTIFIED` with the bundle's SHA-256 only when every stage passed |
-| `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
-| `npm run dist` | Build a Windows NSIS installer |
+| `npm run icons` | Regenerate PNG/ICO brand assets from SVG — they are build inputs, so follow it with `npm run build` before any probe runs: `npm run icons && npm run build` |
+| `npm run verify:icons` | Fail when a committed PNG/ICO no longer matches the SVG it is rendered from, naming the file and the source; `npm run dist` runs it first through `predist` |
+| `npm run verify:installer` | Run after `npm run dist`: fail when the installer is missing or electron-builder packaged its default icon instead of `resources/icon.ico`, and confirm the icon resources are inside `app.asar` |
+| `npm run dist` | Build a Windows NSIS installer (never publishes: `--publish never`) |
 
 Each probe boots a real app, so it captures that app's own stdout/stderr in `.verify-logs/<probe>.log` and prints the log
 tail when a run fails. Before booting, a probe also checks the binary it drives and its debugging port: a missing build,
