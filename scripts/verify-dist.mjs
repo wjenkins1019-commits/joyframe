@@ -41,12 +41,37 @@ const PORT = Number(process.env.JF_DIST_PORT ?? 9226)
 const ROOT = '.verify-dist'
 const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 
+/** Added for every profile by verifyProfile: the seed and the asar boot. */
+const BOOT_CHECKS = ['profile seeded', 'packaged window loads from the asar bundle']
+
 /**
- * Both profiles run the same checks, so a complete pass is a fixed length. A
- * profile that returns early (no window, failed seed) shortens the list and
- * must not be reported as a pass.
+ * What each profile must report beyond the boot checks. A profile that returns
+ * early (no window, failed seed) is missing these by name, and a renamed check
+ * no longer matches, so neither can pass as a shorter run.
  */
-const EXPECTED_CHECKS = 14
+const PROFILE_CHECKS = {
+  demo: [
+    'home rows and cards match the demo library',
+    'home hero renders with metadata',
+    'home hero and first-shelf artwork decode',
+    'library lists the demo games',
+    'console mode opens with populated shelves',
+    'console hero renders with metadata',
+    'console hero and first-shelf artwork decode'
+  ],
+  '1.0.0 profile': [
+    'home rows and cards match the upgraded library',
+    'library lists exactly the visible legacy games'
+  ]
+}
+
+/** Every check a complete run reports, named exactly as the probe reports it. */
+const EXPECTED_CHECKS = [
+  ...Object.entries(PROFILE_CHECKS).flatMap(([label, names]) =>
+    [...BOOT_CHECKS, ...names].map((name) => `${label}: ${name}`)
+  ),
+  'no renderer console errors in either boot'
+]
 const appLog = createAppLog('verify-dist')
 
 /** The two surfaces under test: a container and the hero inside it. */

@@ -47,12 +47,6 @@ const SHOT_DIR = '.verify-shots'
 const finishRun = reportUnfinishedRun('verify:pad')
 const appLog = createAppLog(DIST ? 'verify-dist-pad' : 'verify-pad')
 
-/**
- * Every check in this file runs on each pass, so the list length is fixed. A
- * run that reports fewer checks skipped a block and must not read as green.
- */
-const EXPECTED_CHECKS = 69
-
 /** Captures are per-run artifacts, so keep them out of the tracked shots/ folder. */
 function saveShot(name, data) {
   fs.mkdirSync(SHOT_DIR, { recursive: true })
@@ -356,6 +350,71 @@ const STICK_STEPS = [
   { name: 'Left X between release and engage', axis: 0, value: 0.55, latched: null },
   { name: 'Left X re-engages', axis: 0, value: 0.65, latched: 'right' },
   { name: 'Left Y up engages', axis: 1, value: -0.8, latched: 'up' }
+]
+
+/**
+ * Every check this suite reports, by name, in the order it runs. A block that
+ * stopped running and a check that was renamed both fail the summary against
+ * this list, instead of merely shifting a count.
+ */
+const EXPECTED_CHECKS = [
+  'latched Start on the first pad poll stays on the desktop',
+  'pad detected and pinned',
+  'mapping shown',
+  'non-standard mapping explained',
+  ...TRIGGER_STEPS.map((step) => `${step.name} (${step.value.toFixed(2)})`),
+  ...STICK_STEPS.map((step) => `${step.name} (${step.value.toFixed(2)})`),
+  'checklist starts with unused chips pending',
+  'd-pad press names the action with its pad index',
+  'd-pad press ticks its chip and leaves unused chips pending',
+  'disconnecting clears the checklist',
+  'reconnecting leaves every chip pending again',
+  'both pads listed with exactly one pinned',
+  'pin follows whichever pad shows input',
+  'opening console mode focuses its first content item',
+  'shelf d-pad right is one step',
+  'shelf d-pad right again is one step',
+  'shelf d-pad left is one step',
+  'shelf row long enough to hold',
+  'shelf d-pad hold: waits ~400ms',
+  'shelf d-pad hold: repeats at ~170ms',
+  'shelf d-pad hold: stops on release',
+  'shelf full-tilt stick: waits ~400ms',
+  'shelf full-tilt stick: repeats at ~170ms',
+  'shelf feathered stick steps slower than full tilt',
+  'held repeats scroll instantly and keep focus on screen',
+  'pad switch mid-hold adds no duplicate step',
+  'the pad that took the hold taps exactly one step',
+  'disconnecting mid-hold stops focus and reports the pad gone',
+  'reconnect starts from a clean rising edge',
+  'A opens the focused game detail',
+  'opening the detail focuses its first content item',
+  'B closes the detail and stays in console mode',
+  'closing the detail returns focus to the card that opened it',
+  'hiding a game returns focus once its card is gone',
+  'opening the search focuses its first content item',
+  'console search grid focused',
+  'grid d-pad hold: waits ~400ms',
+  'grid d-pad hold: repeats at ~170ms',
+  'grid full-tilt stick: waits ~400ms',
+  'grid full-tilt stick: repeats at ~170ms',
+  'grid feathered stick steps slower than full tilt',
+  'stick tap is one step',
+  'B in console search closes only the search layer',
+  'closing the search restores the focus it covered',
+  'B exits console mode to the desktop',
+  'RB advances to the next view',
+  'B closes the last view back to Home',
+  'LB wraps from the first view to the last',
+  'RB wraps from the last view to the first',
+  'Start enters console mode',
+  'sidebar stays mounted but hidden in console mode',
+  'Start leaves console mode',
+  'leaving console mode returns focus to the control that started it',
+  'top bar stays mounted but hidden in console mode',
+  'leaving console mode returns focus to top-bar chrome that started it',
+  'B drops the field and leaves the dialog open',
+  'a second B closes the dialog'
 ]
 
 const near = (actual, expected, tolerance = 0.011) =>

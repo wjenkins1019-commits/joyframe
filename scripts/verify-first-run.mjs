@@ -41,11 +41,25 @@ const REAL_PROFILE = process.env.APPDATA ? path.resolve(process.env.APPDATA, 'JO
 const REAL_DB = REAL_PROFILE ? path.join(REAL_PROFILE, 'joyframe.db') : null
 
 /**
- * A complete pass always makes the same checks. A missing window skips the
- * page and database checks, shortening the list, and that must not be reported
- * as a pass.
+ * Every check a complete pass makes, by name. A missing window skips the page
+ * and database checks, which is a missing name here, and a renamed check no
+ * longer matches — so neither reads as a shorter but passing run.
  */
-const EXPECTED_CHECKS = 13
+const EXPECTED_CHECKS = [
+  'the throwaway profile starts without a database',
+  'the packaged window loads from the asar bundle',
+  'the app is using the temporary profile, not the real user data',
+  'the welcome screen renders its first-run copy',
+  'the home screen shows no cards, rows or hero',
+  'the library API reports no games, collections, emulators or scan paths',
+  'the library view is empty',
+  'the first-run database is readable',
+  'the first-run database was created with no library data',
+  'the first-run database was seeded with the platform catalogue',
+  'artwork and backups are still empty',
+  'the real user data was not modified',
+  'no renderer console errors'
+]
 const appLog = createAppLog('verify-first-run')
 
 /** Windows paths are case-insensitive. */

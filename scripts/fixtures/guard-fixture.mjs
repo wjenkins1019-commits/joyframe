@@ -25,26 +25,31 @@ const asarLib = require('@electron/asar')
 
 const [mode, work] = process.argv.slice(2)
 
+/** The names a complete probe reports; a pass must match them exactly. */
+const GUARD_CHECKS = ['first', 'second', 'third']
+const guardResults = (names) => names.map((name) => ({ name, ok: true, detail: 'ok' }))
+
 if (mode === 'short-list') {
-  // A probe that skipped a block: two checks out of three.
-  const complete = reportChecks(
-    [
-      { name: 'first', ok: true, detail: 'ok' },
-      { name: 'second', ok: true, detail: 'ok' }
-    ],
-    { expected: 3, subject: 'guard checks' }
-  )
+  // A probe that skipped a block: two of the three declared checks ran.
+  const complete = reportChecks(guardResults(GUARD_CHECKS.slice(0, 2)), {
+    expected: GUARD_CHECKS,
+    subject: 'guard checks'
+  })
   process.exit(complete ? 0 : 1)
 }
 
 if (mode === 'complete-list') {
-  const complete = reportChecks(
-    [
-      { name: 'first', ok: true, detail: 'ok' },
-      { name: 'second', ok: true, detail: 'ok' }
-    ],
-    { expected: 2, subject: 'guard checks' }
-  )
+  const complete = reportChecks(guardResults(GUARD_CHECKS.slice(0, 2)), {
+    expected: GUARD_CHECKS.slice(0, 2),
+    subject: 'guard checks'
+  })
+  process.exit(complete ? 0 : 1)
+}
+
+if (mode === 'renamed-list') {
+  // A check renamed without renaming it in the declaration: same count, new name.
+  const renamed = [...guardResults(GUARD_CHECKS.slice(0, 1)), { name: 'renamed', ok: true, detail: 'ok' }]
+  const complete = reportChecks(renamed, { expected: GUARD_CHECKS.slice(0, 2), subject: 'guard checks' })
   process.exit(complete ? 0 : 1)
 }
 

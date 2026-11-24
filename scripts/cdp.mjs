@@ -154,24 +154,30 @@ export async function preflight({ label, needs = [], port, portVariable = 'JF_DE
 }
 
 /**
- * Print a probe's checks and hold the run to the number the suite defines.
+ * Print a probe's checks and hold the run to the list the suite declares.
  *
  * A probe that skips a block — an early `return`, a loop that never ran its
  * body — has no way to notice on its own, and its `x/x passed` summary then
- * reads as a full pass. Comparing the tally against `expected` before the
- * summary means a shortened run fails instead of looking green.
+ * reads as a full pass. Comparing the reported names against `expected` catches
+ * that, and catches a renamed check too: a rename has to be made in the
+ * declaration as well, instead of quietly shifting a count.
  *
- * Returns true only when the full check list ran and every check passed.
+ * Returns true only when exactly the declared checks ran and every check passed.
  */
 export function reportChecks(results, { expected, subject }) {
   for (const result of results) {
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
   }
-  if (results.length !== expected) {
-    console.log(
-      `\nFAIL  ${results.length} of ${expected} ${subject} ran — the probe stopped before its full ` +
-        'check list, so this run does not certify the build.'
-    )
+  const ran = new Set(results.map((result) => result.name))
+  const missing = expected.filter((name) => !ran.has(name))
+  const undeclared = [...ran].filter((name) => !expected.includes(name))
+  if (missing.length || undeclared.length) {
+    const problems = []
+    if (missing.length) {
+      problems.push(`${missing.length} of ${expected.length} declared ${subject} never ran: ${missing.join(' | ')}`)
+    }
+    if (undeclared.length) problems.push(`undeclared ${subject} ran: ${undeclared.join(' | ')}`)
+    console.log(`\nFAIL  ${problems.join('. ')}. The run does not match its declared check list.`)
     return false
   }
   const failed = results.filter((result) => !result.ok).length

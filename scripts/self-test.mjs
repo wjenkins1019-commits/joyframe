@@ -3,7 +3,7 @@
  * Self-test for the suite's own guards.
  *
  * The probes are only trustworthy if the machinery that makes a short or silent
- * run fail still fails: the expected-check count, the exit-2 preflight, the
+ * run fail still fails: the declared check list, the exit-2 preflight, the
  * build-freshness stamp, the unfinished-run hook and the packaged-build guard.
  * Those paths are otherwise exercised by hand, once, and never again — so a
  * guard that quietly stopped working would read as a green suite.
@@ -40,9 +40,15 @@ const STALE_CASES = [
 const CASES = [
   {
     mode: 'short-list',
-    name: 'a shortened check list fails instead of printing a pass',
+    name: 'a dropped check fails by name instead of printing a pass',
     exit: 1,
-    stdout: ['FAIL  2 of 3 guard checks ran']
+    stdout: ['FAIL  1 of 3 declared guard checks never ran: third']
+  },
+  {
+    mode: 'renamed-list',
+    name: 'a renamed check fails even though the count is unchanged',
+    exit: 1,
+    stdout: ['declared guard checks never ran: second', 'undeclared guard checks ran: renamed']
   },
   {
     mode: 'complete-list',
