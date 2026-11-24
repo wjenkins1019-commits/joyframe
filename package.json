@@ -9,6 +9,9 @@
     "type": "git",
     "url": "git+https://github.com/wjenkins1019-commits/joyframe.git"
   },
+  "engines": {
+    "node": ">=26"
+  },
   "private": true,
   "type": "module",
   "scripts": {
