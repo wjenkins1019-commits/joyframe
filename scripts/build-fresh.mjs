@@ -3,14 +3,18 @@
  * Build freshness stamp: what out/ was built from.
  *
  * `npm run build` writes `.build-stamp.json` after electron-vite finishes,
- * recording a hash of every build input: src/, the Vite config and the
- * dependency manifests. A probe calls `assertBuildFresh()` before it boots
+ * recording a hash of every build input: src/, the Vite config, the dependency
+ * manifests, the brand resources the package ships and the tsconfigs that shape
+ * the emitted code. A probe calls `assertBuildFresh()` before it boots
  * anything, so an edit that was never rebuilt fails with exit 2 and the remedy
  * instead of the probe quietly driving the previous bundle and passing or
  * failing against code nobody is working on. The config matters because an
  * alias, entry point or plugin change rebuilds out/ without touching src/; the
  * manifests matter because a dependency — including an upgraded native module —
- * changes what is bundled or loaded while src/ stands still.
+ * changes what is bundled or loaded while src/ stands still. `resources/` matters
+ * because the package ships it beside out/, so a changed splash or icon is a
+ * changed app even though the bundle is identical, and the tsconfigs because
+ * their options change what electron-vite emits.
  *
  * The comparison is by content, not timestamp: a checkout or a copy can move
  * mtimes without changing a byte, so only a real difference is reported, by
@@ -25,12 +29,20 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { EXIT_NOT_READY } from './cdp.mjs'
 
-/** Everything that changes what electron-vite puts in out/. */
-const INPUTS = ['src', 'electron.vite.config.ts', 'package.json', 'package-lock.json']
+/** Everything that changes what the app ships: electron-vite's output and the resources beside it. */
+const INPUTS = [
+  'src',
+  'electron.vite.config.ts',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.node.json',
+  'tsconfig.web.json',
+  'resources'
+]
 const OUT = 'out'
 const STAMP = '.build-stamp.json'
 /** Bumped when the stamp's shape changes, so an older stamp is rebuilt, not trusted. */
-const STAMP_VERSION = 3
+const STAMP_VERSION = 4
 const REMEDY = 'Run `npm run build` to rebuild out/ from the current inputs, then retry.'
 
 const sha256 = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex')

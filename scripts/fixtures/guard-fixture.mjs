@@ -69,7 +69,17 @@ if (mode === 'busy-port') {
   process.exit(0)
 }
 
-if (['stale-build', 'stale-config', 'stale-package', 'fresh-build', 'missing-stamp'].includes(mode)) {
+if (
+  [
+    'stale-build',
+    'stale-config',
+    'stale-package',
+    'stale-resources',
+    'stale-tsconfig',
+    'fresh-build',
+    'missing-stamp'
+  ].includes(mode)
+) {
   if (!work) throw new Error(`${mode} needs a work directory`)
   const root = path.join(work, mode)
   fs.mkdirSync(root, { recursive: true })
@@ -79,14 +89,21 @@ if (['stale-build', 'stale-config', 'stale-package', 'fresh-build', 'missing-sta
     'src/main/index.ts': 'the source the build was made from',
     'electron.vite.config.ts': 'export default {}',
     'package.json': '{"dependencies":{"electron":"1.0.0"}}\n',
-    'package-lock.json': '{"lockfileVersion":3,"packages":{}}\n'
+    'package-lock.json': '{"lockfileVersion":3,"packages":{}}\n',
+    'tsconfig.node.json': '{"compilerOptions":{"target":"es2022"}}',
+    'tsconfig.web.json': '{"compilerOptions":{"target":"es2022"}}',
+    'resources/splash.svg': '<svg><!-- the splash the package ships --></svg>'
   }
   // The edit nobody rebuilt: out/ now predates its inputs and must not be trusted.
   const EDITS = {
     'stale-build': ['src/main/index.ts', 'an edit after the build'],
     'stale-config': ['electron.vite.config.ts', 'export default { aliases: { patched: true } }'],
     // A dependency change with no rebuild: src/ and the config are untouched.
-    'stale-package': ['package.json', '{"dependencies":{"electron":"2.0.0"}}\n']
+    'stale-package': ['package.json', '{"dependencies":{"electron":"2.0.0"}}\n'],
+    // An asset the package ships, changed with no rebuild: the bundle is identical.
+    'stale-resources': ['resources/splash.svg', '<svg><!-- an edit with no rebuild --></svg>'],
+    // A compiler setting the build consumed, changed with no rebuild.
+    'stale-tsconfig': ['tsconfig.web.json', '{"compilerOptions":{"target":"es2019"}}']
   }
   for (const [file, contents] of Object.entries(FILES)) {
     fs.mkdirSync(path.dirname(file), { recursive: true })

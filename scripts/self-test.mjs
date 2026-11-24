@@ -28,7 +28,9 @@ const STALE = 'out/ is older than the files it was built from'
 const STALE_CASES = [
   ['stale-build', 'a src/ edit', 'main/index.ts'],
   ['stale-config', 'a config-only edit', 'electron.vite.config.ts'],
-  ['stale-package', 'a package.json-only edit', 'package.json']
+  ['stale-package', 'a package.json-only edit', 'package.json'],
+  ['stale-resources', 'a resources-only edit', 'resources/splash.svg'],
+  ['stale-tsconfig', 'a tsconfig-only edit', 'tsconfig.web.json']
 ].map(([mode, what, file]) => ({
   mode,
   name: `${what} makes out/ stale, naming the file and the remedy`,
