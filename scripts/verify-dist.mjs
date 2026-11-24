@@ -31,6 +31,7 @@ import {
   removeDir,
   reportChecks
 } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 import { openDatabase } from '../src/main/services/db.ts'
 import { buildHomeRows } from '../src/main/services/library.ts'
@@ -248,6 +249,7 @@ async function main() {
     portVariable: 'JF_DIST_PORT',
     needs: [{ file: EXE, remedy: MISSING_PACKAGED }]
   })
+  assertBuildFresh({ label: 'verify:dist' })
   assertPackagedBuildFresh()
 
   removeDir(ROOT)

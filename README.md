@@ -280,7 +280,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | Script | Purpose |
 | --- | --- |
 | `npm run dev` | Electron + Vite with hot reload |
-| `npm run build` | Production bundles in `out/` |
+| `npm run build` | Production bundles in `out/`, stamped with the hashes of `src/` and `electron.vite.config.ts` they were built from (`.build-stamp.json`) |
 | `npm start` | Run the production build |
 | `npm run typecheck` | TypeScript checks for main and renderer |
 | `npm run smoke` | Backend integration smoke test |
@@ -304,7 +304,9 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 Each probe boots a real app, so it captures that app's own stdout/stderr in `.verify-logs/<probe>.log` and prints the log
 tail when a run fails. Before booting, a probe also checks the binary it drives and its debugging port: a missing build,
 a missing Electron binary or a port a leftover instance still holds exits with code `2` and the fix, so exit `1` always
-means the app regressed.
+means the app regressed. Probes that read `out/` also hold it to its build stamp: if `src/` or `electron.vite.config.ts` has changed since the
+build, or the stamp is missing because something other than `npm run build` produced `out/`, they exit `2` naming the
+files and the rebuild rather than testing a bundle that predates the edit.
 
 `npm run check` covers the dev build only, so it can be green while the installer is stale — it reports that comparison
 without failing on it. `npm run certify` is the release signal: it runs `check`, then builds, packages, boots the

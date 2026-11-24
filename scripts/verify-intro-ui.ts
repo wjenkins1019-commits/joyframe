@@ -15,6 +15,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro-ui')
 const appLog = createAppLog('verify-intro-ui')
@@ -44,6 +45,8 @@ await preflight({
     ? [{ file: exe, remedy: 'Point JOYFRAME_EXE at an existing packaged build, then retry.' }]
     : DEV_BOOT_NEEDS
 })
+// A packaged exe carries its own bundle; only the dev build has to be current.
+if (!process.env.JOYFRAME_EXE) assertBuildFresh({ label: 'verify:intro-ui' })
 
 async function launch(): Promise<void> {
   // One log per run: every relaunch in the cycle appends to the same file.

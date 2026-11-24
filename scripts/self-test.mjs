@@ -51,6 +51,30 @@ const CASES = [
     stderr: ['already accepting connections', 'JF_FIXTURE_PORT']
   },
   {
+    mode: 'stale-build',
+    name: 'an out/ older than src/ exits 2 with the changed file and the rebuild remedy',
+    exit: 2,
+    stderr: ['out/ is older than its sources', 'main/index.ts', 'npm run build']
+  },
+  {
+    mode: 'stale-config',
+    name: 'a config-only edit also makes out/ stale',
+    exit: 2,
+    stderr: ['out/ is older than its sources', 'electron.vite.config.ts', 'npm run build']
+  },
+  {
+    mode: 'fresh-build',
+    name: 'an out/ stamped from the current sources still passes',
+    exit: 0,
+    stderrAbsent: ['older than src/', 'no freshness stamp']
+  },
+  {
+    mode: 'missing-stamp',
+    name: 'an unstamped out/ is refused instead of trusted',
+    exit: 2,
+    stderr: ['has no freshness stamp', 'npm run build']
+  },
+  {
     mode: 'unfinished',
     name: 'an unsettled run exits 13 and says it did not finish',
     exit: 13,

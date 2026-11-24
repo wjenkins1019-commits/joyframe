@@ -17,6 +17,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro-pad')
 const appLog = createAppLog('verify-intro-pad')
@@ -28,6 +29,7 @@ fs.rmSync(profile, { recursive: true, force: true })
 const port = 9272
 
 await preflight({ label: 'verify:intro-pad', port, needs: DEV_BOOT_NEEDS })
+assertBuildFresh({ label: 'verify:intro-pad' })
 
 const FAKE_PAD = `(() => {
   const pad = {

@@ -17,6 +17,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { preflight, reportChecks, reportUnfinishedRun } from '../cdp.mjs'
+import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
 const require = createRequire(import.meta.url)
@@ -60,6 +61,27 @@ if (mode === 'busy-port') {
   const server = net.createServer()
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   await preflight({ label: 'guard-fixture', port: server.address().port, portVariable: 'JF_FIXTURE_PORT' })
+  process.exit(0)
+}
+
+if (['stale-build', 'stale-config', 'fresh-build', 'missing-stamp'].includes(mode)) {
+  if (!work) throw new Error(`${mode} needs a work directory`)
+  const root = path.join(work, mode)
+  // Both inputs the real build stamps: the src/ tree and the Vite config.
+  const src = path.join(root, 'src')
+  const config = path.join(root, 'electron.vite.config.ts')
+  const out = path.join(root, 'out')
+  const stamp = path.join(root, '.build-stamp.json')
+  const inputs = [src, config]
+  fs.mkdirSync(path.join(src, 'main'), { recursive: true })
+  fs.writeFileSync(path.join(src, 'main', 'index.ts'), 'the source the build was made from')
+  fs.writeFileSync(config, 'export default {}')
+  fs.mkdirSync(out, { recursive: true })
+  if (mode !== 'missing-stamp') writeBuildStamp({ inputs, out, stamp })
+  // The edit nobody rebuilt: out/ now predates its inputs and must not be trusted.
+  if (mode === 'stale-build') fs.writeFileSync(path.join(src, 'main', 'index.ts'), 'an edit after the build')
+  if (mode === 'stale-config') fs.writeFileSync(config, 'export default { aliases: { patched: true } }')
+  assertBuildFresh({ label: 'guard-fixture', inputs, out, stamp })
   process.exit(0)
 }
 

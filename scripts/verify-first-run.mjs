@@ -29,6 +29,7 @@ import {
   removeDir,
   reportChecks
 } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
 const PORT = Number(process.env.JF_FIRST_RUN_PORT ?? 9227)
@@ -145,6 +146,7 @@ async function main() {
     portVariable: 'JF_FIRST_RUN_PORT',
     needs: [{ file: EXE, remedy: MISSING_PACKAGED }]
   })
+  assertBuildFresh({ label: 'verify:first-run' })
   assertPackagedBuildFresh()
   assertIsolatedProfile()
 

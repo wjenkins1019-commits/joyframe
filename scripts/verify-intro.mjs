@@ -16,6 +16,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro (ident)')
 const appLog = createAppLog('verify-intro')
@@ -26,6 +27,7 @@ const port = 9266
 const shot = path.resolve('.verify-intro/intro.png')
 fs.rmSync(shot, { force: true })
 await preflight({ label: 'verify:intro', port, needs: DEV_BOOT_NEEDS })
+assertBuildFresh({ label: 'verify:intro' })
 const app = spawn('node_modules/electron/dist/electron.exe', [
   '.',
   `--user-data-dir=${profile}`,

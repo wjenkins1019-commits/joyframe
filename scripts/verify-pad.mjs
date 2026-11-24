@@ -35,6 +35,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createAppLog, MISSING_ELECTRON, MISSING_PACKAGED, preflight, reportChecks, reportUnfinishedRun } from './cdp.mjs'
+import { assertBuildFresh } from './build-fresh.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
 const DIST = process.argv.includes('--dist')
@@ -381,8 +382,10 @@ async function main() {
     needs: [{ file: command, remedy: DIST ? MISSING_PACKAGED : MISSING_ELECTRON }]
   })
 
-  if (DIST) assertPackagedBuildFresh()
-  else build()
+  if (DIST) {
+    assertBuildFresh({ label: 'verify:dist-pad' })
+    assertPackagedBuildFresh()
+  } else build()
   removeProfile()
   const seeded = spawnSync(process.execPath, ['scripts/seed-demo.ts', PROFILE], { stdio: 'inherit' })
   if (seeded.status !== 0) {
