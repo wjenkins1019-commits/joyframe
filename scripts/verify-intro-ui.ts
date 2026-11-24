@@ -14,9 +14,10 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro-ui')
+const appLog = createAppLog('verify-intro-ui')
 import { openDatabase } from '../src/main/services/db.ts'
 import { getSettings } from '../src/main/services/settings.ts'
 
@@ -35,9 +36,19 @@ const evaluate = (expression: string): Promise<any> => session!.evaluate(express
 const exe = process.env.JOYFRAME_EXE ?? 'node_modules/electron/dist/electron.exe'
 const appArgs = process.env.JOYFRAME_EXE ? [] : ['.']
 
+await preflight({
+  label: 'verify:intro-ui',
+  port,
+  // A packaged exe is self-contained; only the dev build needs out/ and Electron.
+  needs: process.env.JOYFRAME_EXE
+    ? [{ file: exe, remedy: 'Point JOYFRAME_EXE at an existing packaged build, then retry.' }]
+    : DEV_BOOT_NEEDS
+})
+
 async function launch(): Promise<void> {
+  // One log per run: every relaunch in the cycle appends to the same file.
   app = spawn(exe, [...appArgs, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'], {
-    stdio: 'ignore'
+    stdio: appLog.stdio
   })
   const target = await findWindow(port)
   if (!target) throw new Error('renderer did not expose a debugging target')

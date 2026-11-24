@@ -11,9 +11,10 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro (first-run)')
+const appLog = createAppLog('verify-intro-first-run')
 import { openDatabase } from '../src/main/services/db.ts'
 import { getMeta, updateSettings } from '../src/main/services/settings.ts'
 
@@ -24,10 +25,11 @@ updateSettings(db, { introMode: 'first-run' })
 db.close()
 
 const port = 9267
+await preflight({ label: 'verify:intro (first-run)', port, needs: DEV_BOOT_NEEDS })
 const app = spawn(
   'node_modules/electron/dist/electron.exe',
   ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'],
-  { stdio: 'ignore' }
+  { stdio: appLog.stdio }
 )
 
 const target = await findWindow(port)

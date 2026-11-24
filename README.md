@@ -298,3 +298,8 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` — the final step after a release |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG |
 | `npm run dist` | Build a Windows NSIS installer |
+
+Each probe boots a real app, so it captures that app's own stdout/stderr in `.verify-logs/<probe>.log` and prints the log
+tail when a run fails. Before booting, a probe also checks the binary it drives and its debugging port: a missing build,
+a missing Electron binary or a port a leftover instance still holds exits with code `2` and the fix, so exit `1` always
+means the app regressed.

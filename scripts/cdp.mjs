@@ -6,6 +6,8 @@
  * the socket, evaluation and console capture live here only once.
  */
 import fs from 'node:fs'
+import net from 'node:net'
+import path from 'node:path'
 
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -34,6 +36,147 @@ export function reportUnfinishedRun(label) {
   return () => {
     finished = true
   }
+}
+
+/** Exit code for a run the machine was not ready for, as opposed to a regression. */
+export const EXIT_NOT_READY = 2
+
+/** Where each probe keeps the app output from its last run (gitignored). */
+const LOG_DIR = '.verify-logs'
+
+/**
+ * Capture what the app itself prints, once per probe run.
+ *
+ * Probes boot the app with its output discarded, so a failure showed only the
+ * probe's last reading while the app's own reason (`EPERM`, a crashed renderer,
+ * a second instance quitting) was lost. This opens `.verify-logs/<name>.log` at
+ * start, hands the same handle to every launch in the run, and prints the tail
+ * from an exit hook when the run ends non-zero — a thrown probe, a failed
+ * summary and an unfinished run all reach it. The full log stays on disk.
+ *
+ * The log is opened on the first launch rather than up front, so a run that
+ * never boots the app (a preflight refusal, a setup assertion that threw first)
+ * leaves the previous run's log intact instead of truncating it or reporting a
+ * tail this run did not produce. Nothing else is needed from the caller: the
+ * child writes straight to the fd, so the file is current without a flush, and
+ * the handle closes with the process.
+ */
+export function createAppLog(name, { lines = 40 } = {}) {
+  const file = path.join(LOG_DIR, `${name}.log`)
+  let fd = null
+
+  process.on('exit', (code) => {
+    // No app was launched, or the run passed and a refused preflight (2) never
+    // reached the app: there is no output to show.
+    if (fd === null || code === 0 || code === EXIT_NOT_READY) return
+    let text = ''
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      return
+    }
+    // The exit hook can run while npm is still draining a pipe, so write directly.
+    if (!text.trim()) {
+      fs.writeSync(1, `\nThe app printed nothing — ${file} is empty.\n`)
+      return
+    }
+    const rows = text.replace(/\s+$/, '').split('\n')
+    const tail = rows.slice(-lines)
+    fs.writeSync(
+      1,
+      `\nApp output — ${file} (last ${tail.length} of ${rows.length} lines):\n${tail.join('\n')}\n`
+    )
+  })
+
+  return {
+    /** Pass to spawn as `{ stdio: appLog.stdio }`; opens the log on first launch. */
+    get stdio() {
+      if (fd === null) {
+        fs.mkdirSync(LOG_DIR, { recursive: true })
+        fd = fs.openSync(file, 'w')
+      }
+      return ['ignore', fd, fd]
+    }
+  }
+}
+
+/** True when something already accepts connections on the loopback port. */
+function portIsInUse(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' })
+    const settle = (inUse) => {
+      socket.destroy()
+      resolve(inUse)
+    }
+    socket.setTimeout(500, () => settle(false))
+    socket.once('connect', () => settle(true))
+    socket.once('error', () => settle(false))
+  })
+}
+
+/** Remedies for the prerequisites probes share, phrased as the command that fixes each. */
+export const MISSING_ELECTRON = 'Run `npx install-electron` (Electron ships no binary without it), then retry.'
+export const MISSING_PACKAGED = 'Run `npm run dist` to package the app, then retry.'
+const MISSING_BUILD = 'Run `npm run build` to produce out/, then retry.'
+
+/**
+ * What every probe that boots the dev build needs before it can start. Shared
+ * so a probe cannot drift into checking a different set of files. Read-only.
+ */
+export const DEV_BOOT_NEEDS = [
+  { file: 'node_modules/electron/dist/electron.exe', remedy: MISSING_ELECTRON },
+  { file: 'out/main/index.js', remedy: MISSING_BUILD },
+  { file: 'out/renderer/index.html', remedy: MISSING_BUILD }
+]
+
+/**
+ * The short list of conditions a probe cannot boot without. They are states of
+ * the machine rather than changes in the app — a missing build or Electron
+ * binary, and a debugging port a leftover instance still holds — so they exit
+ * with EXIT_NOT_READY and the fix, leaving exit 1 to mean the build regressed.
+ */
+export async function preflight({ label, needs = [], port, portVariable = 'JF_DEBUG_PORT' }) {
+  const notReady = (reason, remedy) => {
+    fs.writeSync(2, `\n${label}: environment not ready — ${reason}\n${remedy}\n`)
+    process.exit(EXIT_NOT_READY)
+  }
+
+  for (const need of needs) {
+    if (!fs.existsSync(need.file)) notReady(`${need.file} is missing.`, need.remedy)
+  }
+
+  if (port && (await portIsInUse(port))) {
+    notReady(
+      `port ${port} is already accepting connections — a leftover JOYFRAME instance is the usual cause.`,
+      `Close that window (or whatever holds the port), or run again with a different ${portVariable}.`
+    )
+  }
+}
+
+/**
+ * Print a probe's checks and hold the run to the number the suite defines.
+ *
+ * A probe that skips a block — an early `return`, a loop that never ran its
+ * body — has no way to notice on its own, and its `x/x passed` summary then
+ * reads as a full pass. Comparing the tally against `expected` before the
+ * summary means a shortened run fails instead of looking green.
+ *
+ * Returns true only when the full check list ran and every check passed.
+ */
+export function reportChecks(results, { expected, subject }) {
+  for (const result of results) {
+    console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
+  }
+  if (results.length !== expected) {
+    console.log(
+      `\nFAIL  ${results.length} of ${expected} ${subject} ran — the probe stopped before its full ` +
+        'check list, so this run does not certify the build.'
+    )
+    return false
+  }
+  const failed = results.filter((result) => !result.ok).length
+  console.log(`\n${results.length - failed}/${results.length} ${subject} passed.`)
+  return failed === 0
 }
 
 /**

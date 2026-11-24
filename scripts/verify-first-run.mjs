@@ -18,7 +18,17 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { consoleProblems, createSession, delay, findWindow, removeDir } from './cdp.mjs'
+import {
+  consoleProblems,
+  createAppLog,
+  createSession,
+  delay,
+  findWindow,
+  MISSING_PACKAGED,
+  preflight,
+  removeDir,
+  reportChecks
+} from './cdp.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
 const PORT = Number(process.env.JF_FIRST_RUN_PORT ?? 9227)
@@ -28,6 +38,14 @@ const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const DB = path.join(PROFILE, 'joyframe.db')
 const REAL_PROFILE = process.env.APPDATA ? path.resolve(process.env.APPDATA, 'JOYFRAME') : null
 const REAL_DB = REAL_PROFILE ? path.join(REAL_PROFILE, 'joyframe.db') : null
+
+/**
+ * A complete pass always makes the same checks. A missing window skips the
+ * page and database checks, shortening the list, and that must not be reported
+ * as a pass.
+ */
+const EXPECTED_CHECKS = 13
+const appLog = createAppLog('verify-first-run')
 
 /** Windows paths are case-insensitive. */
 const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
@@ -121,6 +139,12 @@ function readFreshDatabase() {
 }
 
 async function main() {
+  await preflight({
+    label: 'verify:first-run',
+    port: PORT,
+    portVariable: 'JF_FIRST_RUN_PORT',
+    needs: [{ file: EXE, remedy: MISSING_PACKAGED }]
+  })
   assertPackagedBuildFresh()
   assertIsolatedProfile()
 
@@ -134,7 +158,9 @@ async function main() {
   check('the throwaway profile starts without a database', !fs.existsSync(DB), path.relative(process.cwd(), PROFILE))
   const realBefore = realDbStamp()
 
-  const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`], { stdio: 'ignore' })
+  const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`], {
+    stdio: appLog.stdio
+  })
 
   try {
     const target = await findWindow(PORT)
@@ -201,34 +227,40 @@ async function main() {
     }
   }
 
-  // The app has exited, so its database and folders are readable on disk.
-  if (fs.existsSync(DB)) {
+  // The app has exited, so its database and folders are readable on disk. A
+  // missing or unreadable database fails all three checks rather than replacing
+  // them, so the tally stays the same whatever goes wrong.
+  const fresh = (() => {
+    if (!fs.existsSync(DB)) return { rows: null, error: `${DB} is missing` }
     try {
-      const rows = readFreshDatabase()
-      check(
-        'the first-run database was created with no library data',
-        rows.games === 0 &&
-          rows.collections === 0 &&
-          rows.emulators === 0 &&
-          rows.libraryPaths === 0 &&
-          rows.playSessions === 0 &&
-          rows.saves === 0,
-        `${rows.games} games, ${rows.collections} collections, ${rows.emulators} emulators, ` +
-          `${rows.libraryPaths} scan paths, ${rows.playSessions} sessions, ${rows.saves} saves`
-      )
-      // Settings rows are written lazily once a setting changes, so only the
-      // seeded platform catalogue is guaranteed on a first boot.
-      check(
-        'the first-run database was seeded with the platform catalogue',
-        rows.platforms > 0,
-        `${rows.platforms} platforms, ${rows.settings} settings rows`
-      )
+      return { rows: readFreshDatabase(), error: null }
     } catch (error) {
-      check('the first-run database is readable', false, error.message)
+      return { rows: null, error: error.message }
     }
-  } else {
-    check('the first-run database was created', false, `${DB} is missing`)
-  }
+  })()
+  const rows = fresh.rows
+  check('the first-run database is readable', Boolean(rows), fresh.error ?? 'read from disk')
+  check(
+    'the first-run database was created with no library data',
+    Boolean(rows) &&
+      rows.games === 0 &&
+      rows.collections === 0 &&
+      rows.emulators === 0 &&
+      rows.libraryPaths === 0 &&
+      rows.playSessions === 0 &&
+      rows.saves === 0,
+    rows
+      ? `${rows.games} games, ${rows.collections} collections, ${rows.emulators} emulators, ` +
+          `${rows.libraryPaths} scan paths, ${rows.playSessions} sessions, ${rows.saves} saves`
+      : fresh.error
+  )
+  // Settings rows are written lazily once a setting changes, so only the
+  // seeded platform catalogue is guaranteed on a first boot.
+  check(
+    'the first-run database was seeded with the platform catalogue',
+    Boolean(rows) && rows.platforms > 0,
+    rows ? `${rows.platforms} platforms, ${rows.settings} settings rows` : fresh.error
+  )
 
   const artwork = entries(path.join(PROFILE, 'artwork'))
   const backups = entries(path.join(PROFILE, 'backups'))
@@ -242,12 +274,8 @@ async function main() {
 
   removeDir(path.resolve(ROOT))
 
-  const failed = results.filter((result) => !result.ok)
-  for (const result of results) {
-    console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
-  }
-  console.log(`\n${results.length - failed.length}/${results.length} first-run checks passed.`)
-  process.exit(failed.length ? 1 : 0)
+  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'first-run checks' })
+  process.exit(complete ? 0 : 1)
 }
 
 main().catch((error) => {

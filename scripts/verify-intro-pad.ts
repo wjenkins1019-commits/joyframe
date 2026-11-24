@@ -16,15 +16,18 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro-pad')
+const appLog = createAppLog('verify-intro-pad')
 import { openDatabase } from '../src/main/services/db.ts'
 import { getSettings } from '../src/main/services/settings.ts'
 
 const profile = path.resolve('.verify-intro/select-pad-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const port = 9272
+
+await preflight({ label: 'verify:intro-pad', port, needs: DEV_BOOT_NEEDS })
 
 const FAKE_PAD = `(() => {
   const pad = {
@@ -67,7 +70,7 @@ async function launch(): Promise<void> {
   app = spawn(
     'node_modules/electron/dist/electron.exe',
     ['.', `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--no-sandbox'],
-    { stdio: 'ignore' }
+    { stdio: appLog.stdio }
   )
   const target = await findWindow(port)
   if (!target) throw new Error('no renderer')

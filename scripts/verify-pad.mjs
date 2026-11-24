@@ -34,7 +34,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { reportUnfinishedRun } from './cdp.mjs'
+import { createAppLog, MISSING_ELECTRON, MISSING_PACKAGED, preflight, reportChecks, reportUnfinishedRun } from './cdp.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
 const DIST = process.argv.includes('--dist')
@@ -44,6 +44,13 @@ const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const SHOT_DIR = '.verify-shots'
 const finishRun = reportUnfinishedRun('verify:pad')
+const appLog = createAppLog(DIST ? 'verify-dist-pad' : 'verify-pad')
+
+/**
+ * Every check in this file runs on each pass, so the list length is fixed. A
+ * run that reports fewer checks skipped a block and must not read as green.
+ */
+const EXPECTED_CHECKS = 69
 
 /** Captures are per-run artifacts, so keep them out of the tracked shots/ folder. */
 function saveShot(name, data) {
@@ -364,6 +371,16 @@ function build() {
 }
 
 async function main() {
+  const electron =
+    process.platform === 'win32' ? 'node_modules/electron/dist/electron.exe' : 'node_modules/.bin/electron'
+  const [command, args] = DIST ? [EXE, []] : [electron, ['.']]
+  await preflight({
+    label: DIST ? 'verify:dist-pad' : 'verify:pad',
+    port: PORT,
+    portVariable: 'JF_DEBUG_PORT',
+    needs: [{ file: command, remedy: DIST ? MISSING_PACKAGED : MISSING_ELECTRON }]
+  })
+
   if (DIST) assertPackagedBuildFresh()
   else build()
   removeProfile()
@@ -373,11 +390,6 @@ async function main() {
     process.exit(1)
   }
 
-  const electron =
-    process.platform === 'win32' ? 'node_modules/electron/dist/electron.exe' : 'node_modules/.bin/electron'
-  const [command, args] = DIST
-    ? [EXE, []]
-    : [electron, ['.']]
   const app = spawn(
     command,
     [
@@ -388,7 +400,7 @@ async function main() {
       '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows'
     ],
-    { stdio: 'ignore' }
+    { stdio: appLog.stdio }
   )
 
   let target
@@ -1038,18 +1050,14 @@ async function main() {
   const dialogClosed = await route()
   check('a second B closes the dialog', !dialogClosed.modal, `modal=${dialogClosed.modal}`)
 
-  const failed = results.filter((result) => !result.ok)
-  for (const result of results) {
-    console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
-  }
-  console.log(`\n${results.length - failed.length}/${results.length} controller checks passed.`)
+  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'controller checks' })
   finishRun()
 
   const exited = app.exitCode === null ? new Promise((resolve) => app.once('exit', resolve)) : Promise.resolve()
   app.kill()
   await Promise.race([exited, delay(4000)])
   removeProfile()
-  process.exit(failed.length ? 1 : 0)
+  process.exit(complete ? 0 : 1)
 }
 
 main().catch((error) => {

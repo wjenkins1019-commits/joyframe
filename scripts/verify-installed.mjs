@@ -14,7 +14,10 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow } from './cdp.mjs'
+import { createAppLog, createSession, delay, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
+
+const finishRun = reportUnfinishedRun('verify:installed')
+const appLog = createAppLog('verify-installed')
 
 const profile = path.resolve('.verify-intro/installed-profile')
 fs.rmSync(profile, { recursive: true, force: true })
@@ -22,13 +25,24 @@ const shot = path.resolve('.verify-intro/intro-installed.png')
 const port = 9268
 
 const exe = process.env.JOYFRAME_EXE ?? 'C:/Program Files/JOYFRAME/JOYFRAME.exe'
-if (!fs.existsSync(exe)) throw new Error(`installed build missing at ${exe} (set JOYFRAME_EXE to override)`)
+await preflight({
+  label: 'verify:installed',
+  port,
+  needs: [
+    {
+      file: exe,
+      remedy:
+        'Install the current build first (`npm run dist`, then the elevated `/allusers /S` installer), ' +
+        'or point JOYFRAME_EXE at an existing copy.'
+    }
+  ]
+})
 
 const app = spawn(exe, [
   `--user-data-dir=${profile}`,
   `--remote-debugging-port=${port}`,
   '--no-sandbox'
-], { stdio: 'ignore' })
+], { stdio: appLog.stdio })
 
 const target = await findWindow(port)
 if (!target) throw new Error('installed app did not expose a renderer')
@@ -91,3 +105,4 @@ if (!cleared) throw new Error('installed intro never cleared')
 if (detailOpened) throw new Error('skip key also activated the app underneath')
 if (!appVisible) throw new Error('installed app shell missing')
 console.log('PASS installed app intro is skippable, respects introMode off, and opens the library')
+finishRun()

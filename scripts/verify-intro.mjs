@@ -15,21 +15,23 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createSession, delay, findWindow, reportUnfinishedRun } from './cdp.mjs'
+import { createAppLog, createSession, delay, DEV_BOOT_NEEDS, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
 
 const finishRun = reportUnfinishedRun('verify:intro (ident)')
+const appLog = createAppLog('verify-intro')
 
 const profile = path.resolve('.verify-intro/intro-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const port = 9266
 const shot = path.resolve('.verify-intro/intro.png')
 fs.rmSync(shot, { force: true })
+await preflight({ label: 'verify:intro', port, needs: DEV_BOOT_NEEDS })
 const app = spawn('node_modules/electron/dist/electron.exe', [
   '.',
   `--user-data-dir=${profile}`,
   `--remote-debugging-port=${port}`,
   '--no-sandbox'
-], { stdio: 'ignore' })
+], { stdio: appLog.stdio })
 
 const target = await findWindow(port)
 if (!target) throw new Error('no renderer target')
@@ -66,6 +68,9 @@ async function reloadWithIntro() {
 }
 
 const results = []
+
+/** Every stage below runs on each pass, so a shorter list means one was skipped. */
+const EXPECTED_STAGES = 7
 
 // 1. Auto-advance when the user does nothing.
 await reloadWithIntro()
@@ -162,5 +167,8 @@ try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: '
 await delay(900)
 try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
 
+if (results.length !== EXPECTED_STAGES) {
+  throw new Error(`intro probe ran ${results.length} of ${EXPECTED_STAGES} stages — the run was shortened`)
+}
 console.log(`PASS intro ${results.join(' + ')}`)
 finishRun()

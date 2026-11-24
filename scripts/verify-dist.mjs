@@ -20,7 +20,17 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { consoleProblems, createSession, delay, findWindow, removeDir } from './cdp.mjs'
+import {
+  consoleProblems,
+  createAppLog,
+  createSession,
+  delay,
+  findWindow,
+  MISSING_PACKAGED,
+  preflight,
+  removeDir,
+  reportChecks
+} from './cdp.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 import { openDatabase } from '../src/main/services/db.ts'
 import { buildHomeRows } from '../src/main/services/library.ts'
@@ -29,6 +39,14 @@ import { queryGames } from '../src/main/services/repo.ts'
 const PORT = Number(process.env.JF_DIST_PORT ?? 9226)
 const ROOT = '.verify-dist'
 const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
+
+/**
+ * Both profiles run the same checks, so a complete pass is a fixed length. A
+ * profile that returns early (no window, failed seed) shortens the list and
+ * must not be reported as a pass.
+ */
+const EXPECTED_CHECKS = 14
+const appLog = createAppLog('verify-dist')
 
 /** The two surfaces under test: a container and the hero inside it. */
 const HOME = { root: 'main[data-jf-view]', hero: 'section[aria-label="Featured game"]' }
@@ -224,6 +242,12 @@ async function checkLegacyProfile({ label, evaluate, read, check, expected }) {
 }
 
 async function main() {
+  await preflight({
+    label: 'verify:dist',
+    port: PORT,
+    portVariable: 'JF_DIST_PORT',
+    needs: [{ file: EXE, remedy: MISSING_PACKAGED }]
+  })
   assertPackagedBuildFresh()
 
   removeDir(ROOT)
@@ -239,7 +263,7 @@ async function main() {
     const expected = expectedViews(profile)
 
     const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${path.resolve(profile)}`], {
-      stdio: 'ignore'
+      stdio: appLog.stdio
     })
 
     try {
@@ -290,12 +314,8 @@ async function main() {
     problems.length ? problems.slice(0, 5).join(' | ') : 'both boots clean'
   )
 
-  const failed = results.filter((result) => !result.ok)
-  for (const result of results) {
-    console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
-  }
-  console.log(`\n${results.length - failed.length}/${results.length} packaged-build checks passed.`)
-  process.exit(failed.length ? 1 : 0)
+  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'packaged-build checks' })
+  process.exit(complete ? 0 : 1)
 }
 
 main().catch((error) => {
