@@ -10,8 +10,11 @@
 # protocol with a virtual pad. windows-latest provides an interactive desktop
 # session, so those probes do not need a self-hosted runner. This is the job
 # that holds the game page's back-button checks, which is why it cannot stay a
-# local-only command. Probes that need a packaged or installed build still run
-# through `npm run certify` on a machine that has one.
+# local-only command. The installer job builds the package and then runs the
+# same controller suite against the packaged exe, so CI covers the asar payload
+# and not only dev Electron. Probes that need an installed copy, or the separate
+# packaged profiles in `verify:dist` and `verify:first-run`, still run through
+# `npm run certify` on a machine that has one.
 #
 # Node is pinned to the version the suite is proven on (26): the services use
 # `node:sqlite` and the probes use the built-in `WebSocket`, both of which a
@@ -92,7 +95,9 @@ jobs:
   # real package, and nothing in CI ran it — so a clean checkout could package
   # the default Electron icon while every other job stayed green. It is a later
   # stage than the checks above: a package made from a tree that failed them
-  # says nothing worth trusting, so this waits for them.
+  # says nothing worth trusting, so this waits for them. Once the package exists,
+  # the controller suite runs against release/win-unpacked, so the shipped exe
+  # is exercised too.
   installer:
     name: installer built from the project's icons
     runs-on: windows-latest
@@ -119,3 +124,9 @@ jobs:
 
       - name: Prove the installer used the project icon
         run: npm run verify:installer
+
+      # Uses the package built above: seeds a throwaway profile, drives
+      # release/win-unpacked/JOYFRAME.exe with the virtual pad, and refuses to
+      # run unless the asar matches the current out/.
+      - name: Controller suite against the packaged build
+        run: npm run verify:dist-pad
