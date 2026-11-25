@@ -1004,15 +1004,34 @@ async function main() {
   // Atomic handover: the next poll sees pad 0 down and pad 1 up, never a zero
   // frame. The release is scheduled in the page, because a delayed DevTools
   // call can hold the pad for seconds and turn healthy repeats into a dozen
-  // moves instead of the one or two a 240ms hold allows.
+  // moves instead of the one or two a short hold allows.
+  //
+  // The timer is a floor, not the whole release: a window that polls slower than
+  // 240ms — a loaded or occluded CI runner throttles its animation frames — would
+  // otherwise be released before it ever read the press, and the handover would
+  // have no step to judge ("moves=0" with a hold that clearly worked). So the
+  // page releases once it has logged the new pad's edge and first repeat, with a
+  // hard stop so a pad that never steps cannot stay held into the next check.
   await evaluate(`(() => {
+    const started = Date.now()
     window.__focusLog.length = 0
     window.__setPad(0, 15, true)
     window.__setPad(1, 15, false)
-    setTimeout(() => window.__setPad(0, 15, false), 240)
+    const release = () => {
+      if (window.__focusLog.length >= 2 || Date.now() - started >= 2000) {
+        window.__setPad(0, 15, false)
+        return
+      }
+      setTimeout(release, 30)
+    }
+    setTimeout(release, 240)
     return true
   })()`)
-  await delay(450)
+  // Wait for the handover to be judged on its own steps rather than on a fixed
+  // sleep, which is the same assumption the page-side release just removed.
+  const handoverDeadline = Date.now() + 3000
+  while (Date.now() < handoverDeadline && (await readLog()).length < 2) await delay(50)
+  await delay(150)
   const handover = await readLog()
   check(
     'pad switch mid-hold adds no duplicate step',
