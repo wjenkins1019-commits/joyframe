@@ -206,10 +206,11 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
   present. Adding a column to `db.ts` without a migration fails this check.
 
 The packaged `release/win-unpacked/JOYFRAME.exe` was also booted in throwaway `--user-data-dir` profiles, and this is
-repeatable: `npm run verify:dist` seeds two disposable profiles, boots the packaged app on each, and checks what
-renders — the 15-game demo library (home rows, hero, decoded artwork, Console Mode shelves) and a **1.0.0 profile**
+repeatable: `npm run verify:dist` seeds three disposable profiles, boots the packaged app on each, and checks what
+renders — the 15-game demo library (home rows, hero, decoded artwork, Console Mode shelves), a **1.0.0 profile**
 built from `scripts/fixtures/schema-1.0.0.sql` (home rows plus the Library view, with the old hidden game still
-hidden). It fails on any renderer console error and removes both profiles afterwards. `npm run verify:dist-pad`
+hidden), and a **ROM-launch profile** whose stub emulator records the argv it receives before and after the per-game
+switch is saved off. It fails on any renderer console error and removes all three profiles afterwards. `npm run verify:dist-pad`
 runs the virtual-gamepad suite against the same packaged exe on a seeded demo profile, covering controller navigation,
 Console Mode and modal back-stack behaviour in the shipped build rather than only dev Electron. Both packaged checks
 compare the contents of `release/win-unpacked/resources/app.asar` with the current `out/` by SHA-256 and refuse to run
