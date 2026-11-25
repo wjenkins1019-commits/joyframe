@@ -258,6 +258,9 @@ Every run prints `spawn->window`, `window->bridge` and `bridge->intro` milliseco
 numbers instead of a vague timeout, and every gate spends one 30 s budget measured from launch rather than restarting
 it — a launch that misses the deadline is reported as slower than it, not as a renderer that never appeared. Set
 `JOYFRAME_BOOT_TIMEOUT_MS` lower to exercise that deadline without waiting; it only tightens the 30 s default.
+CI now runs that probe instead of leaving it to a release machine: the installer job uploads the package it built and a
+separate `installed-checks` job installs it silently (`/allusers /S`) and runs `npm run verify:installed`, so a green
+run cannot sit next to an installer nobody installed.
 `npm run check:installed` runs `npm run check` and then `verify:installed-build` in one go, and is the final step
 after a release: rebuild, install, then that command, so the shipped copy is proven to be the verified build and not
 something from an earlier run.

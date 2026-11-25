@@ -35,6 +35,9 @@ const appLog = createAppLog('verify-installed')
 const profile = path.resolve('.verify-intro/installed-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const shot = path.resolve('.verify-intro/intro-installed.png')
+// CI runs this on a clean tree, where no earlier intro probe has made the
+// directory the failure screenshot lands in.
+fs.mkdirSync(path.dirname(shot), { recursive: true })
 const port = 9268
 
 const exe = process.env.JOYFRAME_EXE ?? 'C:/Program Files/JOYFRAME/JOYFRAME.exe'

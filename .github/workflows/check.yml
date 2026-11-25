@@ -13,8 +13,14 @@
 # local-only command. The installer job builds the package and then runs the
 # same controller suite against the packaged exe, so CI covers the asar payload
 # and not only dev Electron. The separate packaged profiles in `verify:dist` and
-# `verify:first-run` run here too; probes that need an installed copy still run
-# through `npm run certify` on a machine that has one.
+# `verify:first-run` run here too.
+#
+# `verify:installed` was the one probe CI never ran: it looks at a machine-wide
+# copy, so it needs an install, and an install nobody ran by hand left the
+# shipped path unproven. The installer job now uploads the package it built and
+# `installed-checks` installs that exact package silently (`/allusers /S`) and
+# boots the installed copy — the hash against release/win-unpacked, the ident,
+# the skip key without click-through and `introMode: off`.
 #
 # Node is pinned to the version the suite is proven on (26): the services use
 # `node:sqlite` and the probes use the built-in `WebSocket`, both of which a
@@ -157,6 +163,18 @@ jobs:
           JF_FAILURE_ARTIFACTS: installer-build-log-attempt-${{ github.run_attempt }}
         run: npm run verify:installer
 
+      # `installed-checks` installs this package instead of building a second
+      # one, so the bytes it verifies are the bytes this job tested. The asar
+      # travels with it so the hash comparison needs no build of its own.
+      - name: Upload the built installer for the installed-copy job
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-bytes
+          path: |
+            release/*.exe
+            release/win-unpacked/resources/app.asar
+          if-no-files-found: error
+
       # Uses the package built above: seeds a throwaway profile, drives
       # release/win-unpacked/JOYFRAME.exe with the virtual pad, and refuses to
       # run unless the asar matches the current out/.
@@ -235,3 +253,71 @@ jobs:
           name: installer-build-log-attempt-${{ github.run_attempt }}
           path: dist.log
           if-no-files-found: warn
+
+  # The only probe that drives the machine-wide copy, and the only one that
+  # needs an install. It takes the package the installer job built and passed
+  # the packaged suites, installs it silently the way a release machine does,
+  # then runs the same command a release engineer runs: the installed asar must
+  # be byte-for-byte release/win-unpacked, and the copy must boot, show the
+  # ident, skip it on a key press without activating the app underneath, and
+  # honour `introMode: off` on a cold first launch.
+  installed-checks:
+    name: installed copy boots and skips its intro
+    runs-on: windows-latest
+    needs: [installer]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `npm ci`: both scripts behind `npm run verify:installed` import only
+      # `node:` modules and their sibling helpers, so Electron's postinstall
+      # download would add nothing to a check that never boots the workspace
+      # build. A future dependency there fails loudly with MODULE_NOT_FOUND.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+
+      - name: Download the built installer
+        uses: actions/download-artifact@v4
+        with:
+          name: installer-bytes
+          path: release
+
+      - name: Install it silently, the way a release machine does
+        id: install
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $installer = Get-ChildItem release -Filter 'JOYFRAME Setup *.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'release/ holds no installer — the installer job uploaded none' }
+          Write-Host "installing $($installer.Name)"
+          $result = Start-Process -FilePath $installer.FullName -ArgumentList '/allusers', '/S' -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "$($installer.Name) exited $($result.ExitCode)" }
+          # A silent assisted install can still honour its run-after-finish box.
+          # Stop that copy so the probe's own launch owns its profile.
+          Get-Process JOYFRAME -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = 'C:\Program Files\JOYFRAME\JOYFRAME.exe'
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if (-not (Test-Path $exe)) { throw "the installer left no $exe" }
+          Write-Host "installed $exe"
+
+      # The hash runs before anything launches, so a partial or stale install
+      # fails on the bytes instead of as a probe that never found its window.
+      - name: Installed app — intro, skip and cold start
+        id: installed
+        timeout-minutes: 5
+        run: npm run verify:installed
+
+      - name: Upload installed-copy artifacts
+        if: failure() && steps.installed.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-copy-artifacts-attempt-${{ github.run_attempt }}
+          path: |
+            .verify-logs/verify-installed.log
+            .verify-intro
+          if-no-files-found: warn
+          # Both paths live under dot-directories, which upload-artifact skips
+          # unless this is on.
+          include-hidden-files: true

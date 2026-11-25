@@ -59,6 +59,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'installer',
     paths: ['.verify-logs/verify-first-run.log'],
     hidden: true
+  },
+  {
+    name: `installed-copy-artifacts-attempt-${ATTEMPT}`,
+    label: 'the installed-copy artifact keeps its name, paths and hidden files',
+    job: 'installed-checks',
+    paths: ['.verify-logs/verify-installed.log', '.verify-intro'],
+    hidden: true
   }
 ]
 
@@ -74,7 +81,8 @@ const EXPECTED_CHECKS = [
   'each packaged profile upload follows its probe and only runs on that probe failure',
   'each probe step names the artifacts its summary lists',
   'every installer probe has a timeout that fits inside the job',
-  'the dev controller probe has a timeout that fits inside the job'
+  'the dev controller probe has a timeout that fits inside the job',
+  'the installed-copy job installs the built package and runs the installed probe'
 ]
 
 /** A step's `path:` is a block scalar; compare the non-empty lines as a set. */
@@ -248,6 +256,45 @@ check(
   'the dev controller probe has a timeout that fits inside the job',
   Number.isInteger(devTimeout) && devTimeout > 0 && devTimeout < devJob['timeout-minutes'],
   `controller ${devTimeout ?? '(unset)'}m of ${devJob?.['timeout-minutes'] ?? '(unset)'}m`
+)
+
+// The installed copy is the one thing CI could not prove: the installer job
+// builds a package, and nothing installed it. Pin the chain — the package the
+// installer job built and tested is uploaded, downloaded by this job and
+// installed silently, then the probe runs — so dropping a link back to a
+// hand-run command fails here instead of silently leaving the install untested.
+const installedJob = workflow.jobs['installed-checks']
+const installedSteps = installedJob?.steps ?? []
+const packageUpload = uploads.find((upload) => artifactName(upload.step) === 'installer-bytes')
+const packageDownload = installedSteps.find((step) => step.uses === 'actions/download-artifact@v4')
+const installStep = installedSteps.find((step) => step.id === 'install')
+const installedProbe = installedSteps.find((step) => step.run === 'npm run verify:installed')
+const installCommand = String(installStep?.run ?? '')
+const needsInstaller = [].concat(installedJob?.needs ?? []).includes('installer')
+const silentInstall = installCommand.includes('/allusers') && installCommand.includes('/S')
+const probeTimeout = installedProbe?.['timeout-minutes']
+check(
+  'the installed-copy job installs the built package and runs the installed probe',
+  Boolean(installedJob) &&
+    needsInstaller &&
+    Boolean(packageUpload) &&
+    packageUpload.jobId === 'installer' &&
+    String(packageUpload.step.with?.path ?? '').includes('release/*.exe') &&
+    packageDownload?.with?.name === 'installer-bytes' &&
+    packageDownload?.with?.path === 'release' &&
+    silentInstall &&
+    Number.isInteger(probeTimeout) &&
+    probeTimeout > 0 &&
+    probeTimeout < installedJob['timeout-minutes'],
+  installedJob
+    ? [
+        `needs ${[].concat(installedJob.needs ?? []).join(',') || '(none)'}`,
+        `package upload ${packageUpload ? `${packageUpload.jobId}:${packageUpload.step.with?.path}` : '(missing)'}`,
+        `download ${packageDownload ? `${packageDownload.with?.name} -> ${packageDownload.with?.path}` : '(missing)'}`,
+        `install ${installCommand ? (silentInstall ? 'silent /allusers' : 'not silent') : '(missing)'}`,
+        `probe ${probeTimeout ?? '(unset)'}m of ${installedJob['timeout-minutes'] ?? '(unset)'}m`
+      ].join(' | ')
+    : 'job installed-checks is missing'
 )
 
 const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })
