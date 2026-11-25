@@ -139,10 +139,12 @@ jobs:
           set -o pipefail
           npm run dist 2>&1 | tee dist.log
 
-      # A failed build leaves its only diagnostic in dist.log; attach it so the
-      # failure can be read without rebuilding.
+      # dist.log is the build's own account of the package, including the icon
+      # substitution warning the icon check exists to catch. Any installer
+      # failure may need that context, so keep the log for icon-check and
+      # packaged-suite failures too instead of forcing a rebuild to read it.
       - name: Upload installer build log
-        if: failure() && steps.build.outcome == 'failure'
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: installer-build-log-attempt-${{ github.run_attempt }}
