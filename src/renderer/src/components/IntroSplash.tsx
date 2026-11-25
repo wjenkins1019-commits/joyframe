@@ -71,9 +71,11 @@ export function IntroSplash(): React.JSX.Element | null {
   // mounted and renders null afterwards.
   useEffect(() => {
     if (!visible) return
-    // On the name step the gate still swallows background input, but it must
-    // not dismiss the question: typing is the point. The ident skips as before.
-    if (phase === 'name') return registerIntroSkip(() => undefined)
+    // A controller has no way to type here, so any pad button moves on to the
+    // ident instead of trapping the user. Keyboard input in the field is
+    // ignored by navigation, so typing still edits the name rather than
+    // skipping. The ident itself still dismisses to the app.
+    if (phase === 'name') return registerIntroSkip(() => setPhase('play'))
     return registerIntroSkip(() => setPhase('done'))
   }, [visible, phase])
 
