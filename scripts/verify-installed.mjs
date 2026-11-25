@@ -9,6 +9,11 @@
  * checks cannot see. Install first (`npm run dist`, then the elevated
  * `/allusers /S` installer).
  *
+ * The first launch after an install is a cold start — Defender scans the new
+ * files and none of them are in the OS cache — so every stage here waits for
+ * the renderer to reach the state it needs instead of sleeping a fixed time.
+ * A slow boot must not be reported as a build that lost its intro.
+ *
  *   npm run verify:installed
  */
 import { spawn, execFileSync } from 'node:child_process'
@@ -48,22 +53,48 @@ const target = await findWindow(port)
 if (!target) throw new Error('installed app did not expose a renderer')
 const { call, close, evaluate } = await createSession(target)
 
+/** How long a cold first launch may take to reach a painted state. */
+const BOOT_TIMEOUT_MS = 30000
+
+/**
+ * Poll until `expression` returns something truthy.
+ *
+ * A reload destroys the execution context mid-poll, so a rejected read means
+ * "not yet", not "the app is broken"; only a timeout is a failure.
+ */
+async function readValue(expression, timeout) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    try {
+      const value = await evaluate(expression)
+      if (value) return value
+    } catch {
+      /* the reload replaced the execution context; ask again */
+    }
+    await delay(100)
+  }
+  return null
+}
+
+const INTRO_PHASE = `document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`
+const phase = () => evaluate(INTRO_PHASE).catch(() => null)
+
+// Wait out the cold start before touching settings: a reload issued while the
+// window is still booting can be dropped, which would leave the intro to run
+// for the unnamed profile instead of the ident this probe checks.
+if (!(await readValue(`Boolean(window.joyframe?.settings)`, BOOT_TIMEOUT_MS))) {
+  throw new Error('installed app never exposed its settings bridge')
+}
+
 // The installed copy starts with an unnamed profile on a fresh directory; name
 // it and reload so this probe exercises the ident rather than the name step.
 await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
 await call('Page.reload')
-await delay(900)
 
-const phase = () =>
-  evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
-let seen = null
-for (let attempt = 0; attempt < 40 && !seen; attempt++) {
-  seen = await phase()
-  if (!seen) await delay(100)
-}
+const seen = await readValue(INTRO_PHASE, BOOT_TIMEOUT_MS)
 const captured = await call('Page.captureScreenshot', { format: 'png' })
 if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
-const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`)
+const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
 
 // A real key press must dismiss the installed build's intro immediately.
 const started = Date.now()
@@ -85,7 +116,9 @@ console.log('cleared after key press ms:', cleared ? skipMs : null, 'detail open
 const mode = await evaluate(`window.joyframe.settings.get().then((s) => s.introMode)`)
 await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
 await call('Page.reload')
-await delay(700)
+// "No intro" only proves something once the shell has painted: an empty
+// document on a slow boot would otherwise pass for a build honouring "off".
+const offPainted = await readValue(`Boolean(document.querySelector('[data-jf-view]'))`, BOOT_TIMEOUT_MS)
 let offPlayed = false
 const offDeadline = Date.now() + 2600
 while (Date.now() < offDeadline) {
@@ -98,6 +131,7 @@ while (Date.now() < offDeadline) {
 const offApp = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
 console.log('installed introMode:', JSON.stringify(mode), 'off mode played:', offPlayed, 'app visible:', offApp)
 if (mode !== 'always') throw new Error(`unexpected installed introMode ${JSON.stringify(mode)}`)
+if (!offPainted) throw new Error('installed app shell never painted with intro off')
 if (offPlayed) throw new Error('installed build ignored introMode off')
 if (!offApp) throw new Error('installed app missing with intro off')
 
