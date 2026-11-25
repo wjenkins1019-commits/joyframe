@@ -167,8 +167,8 @@ const escapeCommand = (text, property = false) => {
   return property ? escaped.replace(/:/g, '%3A').replace(/,/g, '%2C') : escaped
 }
 
-/** Keep a detail on one table row; a literal pipe must not split the cell. */
-const tableCell = (text) => String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
+/** Summary lines are one line each; a probe's detail may carry a newline. */
+const oneLine = (text) => String(text).replace(/\r?\n/g, ' ')
 
 /** Append one section to the job summary, when this step has one. */
 function appendSummary(lines) {
@@ -180,6 +180,12 @@ function appendSummary(lines) {
     console.error(`Could not append to the job summary — ${error.message}`)
   }
 }
+
+/** The artifacts this job uploads for the failure, as summary lines. */
+const artifactNote = (artifacts) =>
+  artifacts.length
+    ? [`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '']
+    : []
 
 /**
  * Make a red probe readable from the run page.
@@ -206,21 +212,16 @@ function reportFailure({ subject, total, failed, problems, artifacts }) {
     failed.length ? `## ${subject} — ${failed.length} of ${total} failed` : `## ${subject} — run incomplete`,
     ''
   ]
-  if (failed.length) {
-    lines.push('| Check | Detail |', '| --- | --- |')
-    for (const result of failed) {
-      lines.push(`| ${tableCell(result.name)} | ${tableCell(result.detail ?? '')} |`)
-    }
-    lines.push('')
+  for (const result of failed) {
+    lines.push(`- **${oneLine(result.name)}** — ${oneLine(result.detail ?? '')}`)
   }
+  if (failed.length) lines.push('')
   if (problems.length) {
     lines.push('The run does not match its declared check list:', '')
     for (const problem of problems) lines.push(`- ${problem}`)
     lines.push('')
   }
-  if (artifacts.length) {
-    lines.push(`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '')
-  }
+  lines.push(...artifactNote(artifacts))
   appendSummary(lines)
 }
 
@@ -237,12 +238,8 @@ export function reportCrash({ subject, error, artifacts = [] }) {
   if (process.env.GITHUB_ACTIONS === 'true') {
     console.log(`::error title=${escapeCommand(`${subject} failed before reporting`, true)}::${escapeCommand(message)}`)
   }
-  const lines = [`## ${subject} — run failed before reporting`, '']
-  for (const line of message.split(/\r?\n/)) lines.push(`> ${line}`)
-  lines.push('')
-  if (artifacts.length) {
-    lines.push(`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '')
-  }
+  const lines = [`## ${subject} — run failed before reporting`, '', `> ${oneLine(message)}`, '']
+  lines.push(...artifactNote(artifacts))
   appendSummary(lines)
 }
 

@@ -557,8 +557,7 @@ async function main() {
       summary: {
         ran: results.length,
         passed: results.filter((result) => result.ok).length,
-        failed: results.filter((result) => !result.ok).length,
-        notRun: EXPECTED_CHECKS.filter((name) => !results.some((result) => result.name === name))
+        failed: results.filter((result) => !result.ok).length
       }
     }
 

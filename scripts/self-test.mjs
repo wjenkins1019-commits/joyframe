@@ -76,7 +76,7 @@ const CASES = [
     stdout: ['::error title=second::pad 1 | stuck at 0.5'],
     summary: [
       '## guard checks — 1 of 2 failed',
-      '| second | pad 1 \\| stuck at 0.5 |',
+      '- **second** — pad 1 | stuck at 0.5',
       '`guard-artifact-attempt-1`'
     ]
   },
