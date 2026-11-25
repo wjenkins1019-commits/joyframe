@@ -46,7 +46,28 @@ if (mode === 'failed-check') {
       { name: 'first', ok: true, detail: 'ok' },
       { name: 'second', ok: false, detail: 'pad 1 | stuck at 0.5' }
     ],
-    { expected: ['first', 'second'], subject: 'guard checks', artifacts: ['guard-artifact-attempt-1'] }
+    {
+      expected: ['first', 'second'],
+      subject: 'guard checks',
+      artifacts: ['guard-artifact-attempt-1'],
+      firstFailure: {
+        route: 'view=home console=false detail=false modal=false',
+        focus: 'Scan library at x=1180',
+        controller: 'pinned=true pads=0*,1 mapping=standard last=D-pad down checks=3/14',
+        screenshot: 'guard-failure.jpg',
+        readErrors: []
+      }
+    }
+  )
+  process.exit(complete ? 0 : 1)
+}
+
+if (mode === 'many-failures') {
+  // More failures than GitHub's ten-annotation step limit.
+  const names = Array.from({ length: 12 }, (_, index) => `guard ${String(index + 1).padStart(2, '0')}`)
+  const complete = reportChecks(
+    names.map((name, index) => ({ name, ok: false, detail: `forced failure ${String(index + 1).padStart(2, '0')}` })),
+    { expected: names, subject: 'guard checks', artifacts: ['guard-artifact-attempt-1'] }
   )
   process.exit(complete ? 0 : 1)
 }

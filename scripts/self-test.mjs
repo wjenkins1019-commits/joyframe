@@ -38,7 +38,7 @@ const STALE_CASES = [
   stderr: [STALE, file, 'npm run build']
 }))
 
-/** mode, expected exit code, and text that must (not) appear on each stream. */
+/** mode, expected exit code, and text/counts that must (not) appear on each stream. */
 const CASES = [
   {
     mode: 'short-list',
@@ -77,6 +77,29 @@ const CASES = [
     summary: [
       '## guard checks — 1 of 2 failed',
       '- **second** — pad 1 | stuck at 0.5',
+      'First failure state:',
+      '- Route: `view=home console=false detail=false modal=false`',
+      '- Focus: `Scan library at x=1180`',
+      '- Controller: `pinned=true pads=0*,1 mapping=standard last=D-pad down checks=3/14`',
+      '- Screenshot: `guard-failure.jpg`',
+      '`guard-artifact-attempt-1`'
+    ]
+  },
+  {
+    mode: 'many-failures',
+    name: 'annotations cap at ten and name the rest in an aggregate line',
+    exit: 1,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: [
+      '::error title=guard checks — 3 more failed checks::The job summary lists all 12 failed guard checks.',
+      '::error title=guard 09::forced failure 09'
+    ],
+    stdoutAbsent: ['::error title=guard 10::'],
+    stdoutLines: [{ prefix: '::error', count: 10 }],
+    summary: [
+      '## guard checks — 12 of 12 failed',
+      '- **guard 12** — forced failure 12',
+      'Only 9 of 12 failed checks fit in the run-page annotations; the aggregate reports the remainder. This list is complete.',
       '`guard-artifact-attempt-1`'
     ]
   },
@@ -161,11 +184,19 @@ try {
       ...(testCase.stderr ?? []).filter((text) => !stderr.includes(text)),
       ...(testCase.summary ?? []).filter((text) => !summary.includes(text))
     ]
-    const unexpected = (testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text))
+    const unexpected = [
+      ...(testCase.stdoutAbsent ?? []).filter((text) => stdout.includes(text)),
+      ...(testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text))
+    ]
+    const lineProblems = (testCase.stdoutLines ?? []).flatMap(({ prefix, count }) => {
+      const actual = stdout.split(/\r?\n/).filter((line) => line.startsWith(prefix)).length
+      return actual === count ? [] : [`${actual} stdout lines starting with ${prefix}, expected ${count}`]
+    })
     const problems = []
     if (run.status !== testCase.exit) problems.push(`exit ${run.status}, expected ${testCase.exit}`)
     if (missing.length) problems.push(`missing from output: ${missing.join(' | ')}`)
     if (unexpected.length) problems.push(`should not have printed: ${unexpected.join(' | ')}`)
+    if (lineProblems.length) problems.push(...lineProblems)
     check(
       testCase.name,
       problems.length === 0,

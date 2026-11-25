@@ -170,6 +170,31 @@ const escapeCommand = (text, property = false) => {
 /** Summary lines are one line each; a probe's detail may carry a newline. */
 const oneLine = (text) => String(text).replace(/\r?\n/g, ' ')
 
+/** GitHub Actions renders at most ten error annotations from one step. */
+const ANNOTATION_LIMIT = 10
+
+/** One value in a summary code span; a backtick would end the span. */
+const code = (text) => `\`${oneLine(text).replace(/`/g, "'")}\``
+
+/** A compact record of the state the first failed check saw. */
+const firstFailureNote = (firstFailure) => {
+  if (!firstFailure) return []
+  const lines = ['First failure state:', '']
+  if (firstFailure.error) {
+    lines.push(`- Capture: failed — ${oneLine(firstFailure.error)}`)
+  } else {
+    lines.push(`- Route: ${code(firstFailure.route ?? 'unavailable')}`)
+    lines.push(`- Focus: ${code(firstFailure.focus ?? 'none')}`)
+    lines.push(`- Controller: ${code(firstFailure.controller ?? 'unavailable')}`)
+    lines.push(`- Screenshot: ${code(firstFailure.screenshot ?? 'unavailable')}`)
+  }
+  if (firstFailure.readErrors?.length) {
+    lines.push(`- State reads failed: ${firstFailure.readErrors.map(oneLine).join('; ')}`)
+  }
+  lines.push('')
+  return lines
+}
+
 /** Append one section to the job summary, when this step has one. */
 function appendSummary(lines) {
   const summaryFile = process.env.GITHUB_STEP_SUMMARY
@@ -192,18 +217,44 @@ const artifactNote = (artifacts) =>
  *
  * Annotations put each failed check in the run's annotations view, and the job
  * summary keeps the same list beside the artifacts the job uploads, so triage
- * does not begin with a download. Both are written only inside Actions; a
- * local run keeps its plain output. A failed summary write is reported but
- * never changes the probe's verdict.
+ * does not begin with a download. A broad failure keeps the first nine
+ * annotations and adds one aggregate line; GitHub accepts only ten error
+ * annotations from one step, while the summary lists every failure. Both are
+ * written only inside Actions; a local run keeps its plain output. A failed
+ * summary write is reported but never changes the probe's verdict.
  */
-function reportFailure({ subject, total, failed, problems, artifacts }) {
+function reportFailure({ subject, total, failed, problems, artifacts, firstFailure = null }) {
+  const annotations = []
+  if (problems.length) {
+    annotations.push({
+      kind: 'problems',
+      title: `${subject} did not match its declared list`,
+      message: problems.join('. ')
+    })
+  }
+  for (const result of failed) {
+    annotations.push({ kind: 'failed', title: result.name, message: result.detail ?? '' })
+  }
+
+  let shown = annotations
+  let truncated = false
+  if (process.env.GITHUB_ACTIONS === 'true' && annotations.length > ANNOTATION_LIMIT) {
+    truncated = true
+    const visible = annotations.slice(0, ANNOTATION_LIMIT - 1)
+    const hidden = annotations.length - visible.length
+    shown = [
+      ...visible,
+      {
+        kind: 'aggregate',
+        title: `${subject} — ${hidden} more failed checks`,
+        message: `The job summary lists all ${failed.length} failed ${subject}${problems.length ? ' and the declared-list problem' : ''}.`
+      }
+    ]
+  }
   if (process.env.GITHUB_ACTIONS === 'true') {
-    for (const result of failed) {
-      console.log(`::error title=${escapeCommand(result.name, true)}::${escapeCommand(result.detail ?? '')}`)
-    }
-    if (problems.length) {
+    for (const annotation of shown) {
       console.log(
-        `::error title=${escapeCommand(`${subject} did not match its declared list`, true)}::${escapeCommand(problems.join('. '))}`
+        `::error title=${escapeCommand(annotation.title, true)}::${escapeCommand(annotation.message)}`
       )
     }
   }
@@ -216,10 +267,18 @@ function reportFailure({ subject, total, failed, problems, artifacts }) {
     lines.push(`- **${oneLine(result.name)}** — ${oneLine(result.detail ?? '')}`)
   }
   if (failed.length) lines.push('')
+  lines.push(...firstFailureNote(firstFailure))
   if (problems.length) {
     lines.push('The run does not match its declared check list:', '')
     for (const problem of problems) lines.push(`- ${problem}`)
     lines.push('')
+  }
+  if (truncated) {
+    const shownFailed = shown.filter((annotation) => annotation.kind === 'failed').length
+    lines.push(
+      `Only ${shownFailed} of ${failed.length} failed checks fit in the run-page annotations; the aggregate reports the remainder. This list is complete.`,
+      ''
+    )
   }
   lines.push(...artifactNote(artifacts))
   appendSummary(lines)
@@ -252,12 +311,13 @@ export function reportCrash({ subject, error, artifacts = [] }) {
  * that, and catches a renamed check too: a rename has to be made in the
  * declaration as well, instead of quietly shifting a count.
  *
- * A red run also annotates each failed check and appends them, with the
- * artifact names the caller passes, to the job summary. See reportFailure.
+ * A red run annotates up to ten failures (GitHub's per-step limit) and appends
+ * them, the first failure's captured state and the artifact names the caller
+ * passes to the job summary. See reportFailure.
  *
  * Returns true only when exactly the declared checks ran and every check passed.
  */
-export function reportChecks(results, { expected, subject, artifacts = [] }) {
+export function reportChecks(results, { expected, subject, artifacts = [], firstFailure = null }) {
   for (const result of results) {
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
   }
@@ -276,7 +336,7 @@ export function reportChecks(results, { expected, subject, artifacts = [] }) {
     console.log(`\n${results.length - failed.length}/${results.length} ${subject} passed.`)
   }
   if (failed.length || problems.length) {
-    reportFailure({ subject, total: results.length, failed, problems, artifacts })
+    reportFailure({ subject, total: results.length, failed, problems, artifacts, firstFailure })
   }
   return failed.length === 0 && problems.length === 0
 }

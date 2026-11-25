@@ -66,6 +66,30 @@ function saveShot(name, data) {
   fs.writeFileSync(path.join(SHOT_DIR, name), Buffer.from(data, 'base64'))
 }
 
+/** A compact description of where the app was when the first check failed. */
+const describeRoute = (route) =>
+  route
+    ? `view=${route.view ?? 'none'} console=${route.console} detail=${route.detail} modal=${route.modal}${
+        route.focusCard ? ` card=${route.focusCard}` : ''
+      }`
+    : 'unavailable'
+
+const describeFocus = (focus) =>
+  focus ? `${focus.label ?? '?'} at x=${focus.x ?? '?'}` : 'none'
+
+const describeController = (controller) => {
+  if (!controller) return 'unavailable'
+  const pads = (controller.pads ?? []).map((pad) => `${pad.index}${pad.pinned ? '*' : ''}`).join(',') || 'none'
+  return [
+    `pinned=${controller.pinned}`,
+    `pads=${pads}`,
+    `mapping=${controller.mapping ?? 'none'}`,
+    `latched=${controller.latched ?? 'none'}`,
+    `last=${controller.lastAction?.text ?? 'none'}`,
+    `checks=${controller.checkCount ?? '?'}`
+  ].join(' ')
+}
+
 /** Windows keeps profile files locked until the app exits; a leftover profile is gitignored. */
 function removeProfile() {
   try {
@@ -531,6 +555,7 @@ async function main() {
   const results = []
   let captureStarted = false
   let failureCapture = Promise.resolve()
+  let firstFailure = null
 
   /**
    * Record the state the first failed check saw.
@@ -585,15 +610,27 @@ async function main() {
     fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`)
     const shotNote = report.screenshotError ? `no screenshot — ${report.screenshotError}` : report.screenshot
     console.log(`\nFirst failure captured — ${file} (${shotNote})`)
+    return {
+      route: describeRoute(report.route),
+      focus: describeFocus(report.focus),
+      controller: describeController(report.controller),
+      screenshot: report.screenshotError ? `failed — ${report.screenshotError}` : report.screenshot,
+      readErrors: report.readErrors
+    }
   }
 
   const check = (name, ok, detail) => {
     results.push({ name, ok, detail })
     if (ok || captureStarted) return
     captureStarted = true
-    failureCapture = captureFailure({ name, detail }).catch((error) => {
-      console.error(`\nFailure diagnostics could not be written — ${error.message}`)
-    })
+    failureCapture = captureFailure({ name, detail })
+      .then((summary) => {
+        firstFailure = summary
+      })
+      .catch((error) => {
+        firstFailure = { error: error.message }
+        console.error(`\nFailure diagnostics could not be written — ${error.message}`)
+      })
   }
 
   // ---- Latched input at startup -------------------------------------------
@@ -1283,7 +1320,8 @@ async function main() {
   const complete = reportChecks(results, {
     expected: EXPECTED_CHECKS,
     subject: 'controller checks',
-    artifacts: ARTIFACTS
+    artifacts: ARTIFACTS,
+    firstFailure
   })
   finishRun()
 
