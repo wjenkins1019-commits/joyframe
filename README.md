@@ -12,8 +12,8 @@ Built as an Electron + React + TypeScript application with a local SQLite databa
 
 ## Download and install (Windows)
 
-**[Download the latest JOYFRAME installer](https://github.com/wjenkins1019-commits/joyframe/releases/latest)** — look for
-`JOYFRAME Setup 1.0.0.exe` under **Assets**.
+**[Download the latest JOYFRAME installer](https://github.com/wjenkins1019-commits/joyframe/releases/latest)** — look for the
+`JOYFRAME.Setup.1.0.0.exe` asset under **Assets**.
 
 1. Download the `.exe` and run it.
 2. Choose an install folder (the default is fine) and finish the wizard.
