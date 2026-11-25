@@ -870,7 +870,10 @@ async function main() {
   await clearLog()
   // Atomic handover: the next poll sees pad 0 down and pad 1 up, never a zero frame.
   await evaluate('(window.__setPad(0, 15, true), window.__setPad(1, 15, false), true)')
-  await delay(320)
+  // Release before a third repeat can land: the app notices the release on its
+  // 90ms poll, so holding longer lets a healthy repeat fire after the release
+  // call and makes a clean handover look like three moves.
+  await delay(240)
   await evaluate('(window.__setPad(0, 15, false), true)')
   await delay(450)
   const handover = await readLog()
