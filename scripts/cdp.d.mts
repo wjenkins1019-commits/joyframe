@@ -30,7 +30,10 @@ export interface CdpSession {
   evaluate: (expression: string) => Promise<any>
 }
 
-export declare function findWindow(port: number): Promise<{ webSocketDebuggerUrl: string } | null>
+export declare function findWindow(
+  port: number,
+  options?: { timeout?: number; interval?: number }
+): Promise<{ webSocketDebuggerUrl: string } | null>
 
 /** Exit code for a run the machine was not ready for, not a regression. */
 export declare const EXIT_NOT_READY: number

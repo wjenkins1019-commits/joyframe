@@ -452,10 +452,22 @@ export async function connect(debuggerUrl) {
   }
 }
 
-/** One app window is expected; the packaged build may spend a moment starting up. */
-export async function findWindow(port) {
-  for (let attempt = 0; attempt < 80; attempt++) {
-    await delay(250)
+/**
+ * Wait for the app's window to appear on the debugging port.
+ *
+ * One app window is expected, but a cold first launch spends longer than a warm
+ * one starting up. The budget used to be a fixed 80 × 250 ms (~20 s) inside this
+ * function while the caller gave the boot 30 s, so a 22-second launch returned
+ * null and was reported as "did not expose a renderer" — a missing window — when
+ * it was only slower than discovery. Callers now pass the same deadline they hold
+ * the rest of the boot to, so discovery runs out with the boot budget and the
+ * caller can say the launch was slow. Sleeps are clipped to the remaining time,
+ * so the deadline is real to within one poll rather than one whole interval.
+ */
+export async function findWindow(port, { timeout = 20000, interval = 250 } = {}) {
+  const deadline = Date.now() + timeout
+  do {
+    await delay(Math.max(0, Math.min(interval, deadline - Date.now())))
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
       const target = list.find((entry) => entry.type === 'page' && entry.url.includes('index.html'))
@@ -463,7 +475,7 @@ export async function findWindow(port) {
     } catch {
       /* still starting */
     }
-  }
+  } while (Date.now() < deadline)
   return null
 }
 

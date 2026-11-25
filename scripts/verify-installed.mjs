@@ -51,14 +51,32 @@ await preflight({
   ]
 })
 
+/**
+ * How long a cold first launch may take to reach a painted state. Window
+ * discovery and every later gate read this one number, so a launch slower than
+ * the deadline reports a slow boot instead of a missing renderer. Lowering it
+ * through the environment only tightens the real deadline — it never loosens
+ * the 30 s default — and exists so the expiry path can be proven against the
+ * installed app without waiting a full minute for a failure.
+ */
+const BOOT_TIMEOUT_MS = (() => {
+  const raw = process.env.JOYFRAME_BOOT_TIMEOUT_MS
+  if (raw === undefined || raw === '') return 30000
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `JOYFRAME_BOOT_TIMEOUT_MS must be a positive number of milliseconds, got ${JSON.stringify(raw)}`
+    )
+  }
+  return value
+})()
+
+const spawnedAt = Date.now()
 const app = spawn(exe, [
   `--user-data-dir=${profile}`,
   `--remote-debugging-port=${port}`,
   '--no-sandbox'
 ], { stdio: appLog.stdio })
-
-/** How long a cold first launch may take to reach a painted state. */
-const BOOT_TIMEOUT_MS = 30000
 
 const INTRO_PHASE = `document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`
 
@@ -72,8 +90,17 @@ let detailOpened = null
 let appVisible = null
 
 try {
-  const target = await findWindow(port)
-  if (!target) throw new Error('installed app did not expose a renderer')
+  // Discovery shares the boot deadline, so a slow launch is named as slow
+  // rather than as a build that never produced a window.
+  const target = await findWindow(port, { timeout: BOOT_TIMEOUT_MS })
+  if (!target) {
+    throw new Error(
+      `installed app exposed no renderer within ${BOOT_TIMEOUT_MS} ms of launch — the boot is slower than the deadline`
+    )
+  }
+  const windowAt = Date.now()
+  console.log(`installed boot: spawn->window ${windowAt - spawnedAt} ms`)
+
   session = await createSession(target)
   const { call, evaluate } = session
   const phase = () => evaluate(INTRO_PHASE).catch(() => null)
@@ -82,8 +109,14 @@ try {
   // window is still booting can be dropped, which would leave the intro to run
   // for the unnamed profile instead of the ident this probe checks.
   if (!(await waitForValue(evaluate, `Boolean(window.joyframe?.settings)`, { timeout: BOOT_TIMEOUT_MS }))) {
-    throw new Error('installed app never exposed its settings bridge')
+    throw new Error(
+      `installed app exposed no settings bridge within ${BOOT_TIMEOUT_MS} ms of its window — the boot is slower than the deadline`
+    )
   }
+  // Includes attaching and the session's own reload, so it reads as the probe's
+  // setup plus the app's first paint, not as app time alone.
+  const bridgeAt = Date.now()
+  console.log(`installed boot: window->bridge ${bridgeAt - windowAt} ms (includes the session attach and reload)`)
 
   // The installed copy starts with an unnamed profile on a fresh directory; name
   // it and reload so this probe exercises the ident rather than the name step.
@@ -91,6 +124,13 @@ try {
   await call('Page.reload')
 
   seen = await waitForValue(evaluate, INTRO_PHASE, { timeout: BOOT_TIMEOUT_MS })
+  if (seen === null) {
+    throw new Error(
+      `installed app showed no intro within ${BOOT_TIMEOUT_MS} ms of the reload — the boot is slower than the deadline`
+    )
+  }
+  const introAt = Date.now()
+  console.log(`installed boot: bridge->intro ${introAt - bridgeAt} ms (after the probe's settings reload)`)
   const captured = await call('Page.captureScreenshot', { format: 'png' })
   if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
   const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
