@@ -1067,9 +1067,13 @@ async function main() {
   await clearLog()
   await delay(500)
   const ghosts = (await readLog()).length
-  await evaluate('(window.__setPad(0, 15, true), true)')
-  await delay(220)
-  await evaluate('(window.__setPad(0, 15, false), true)')
+  // Release in the page: a delayed DevTools call would hold the pad past the
+  // repeat delay and turn one press into a burst of ghost steps.
+  await evaluate(`(() => {
+    window.__setPad(0, 15, true)
+    setTimeout(() => window.__setPad(0, 15, false), 220)
+    return true
+  })()`)
   await delay(450)
   const rising = await readLog()
   check(
@@ -1113,6 +1117,8 @@ async function main() {
   // and the first click landed where it had been, not where it was. Record its
   // position every frame from before opening, then click its settled position
   // immediately after a reopen: a page that moves loses the click and fails.
+  // Start the sampler and press in the same page-side call: a delayed DevTools
+  // press would otherwise open the page after the sampling window had closed.
   await evaluate(`(() => {
     window.__backSamples = []
     const started = performance.now()
@@ -1122,9 +1128,10 @@ async function main() {
       if (performance.now() - started < 1600) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
+    window.__trigger(0, 1)
+    setTimeout(() => window.__trigger(0, 0), 220)
     return true
   })()`)
-  await press(0, 220) // A opens the focused card
   await delay(1600)
   const samples = (await evaluate('window.__backSamples.slice()')) ?? []
   const spread = samples.length ? Math.max(...samples) - Math.min(...samples) : Infinity
