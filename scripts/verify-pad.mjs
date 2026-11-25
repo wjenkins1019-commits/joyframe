@@ -44,8 +44,9 @@ const PROFILE = DIST ? '.verify-pad-dist' : '.verify-pad'
 const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const SHOT_DIR = '.verify-shots'
+const RUN = DIST ? 'verify-dist-pad' : 'verify-pad'
 const finishRun = reportUnfinishedRun('verify:pad')
-const appLog = createAppLog(DIST ? 'verify-dist-pad' : 'verify-pad')
+const appLog = createAppLog(RUN)
 
 /** Captures are per-run artifacts, so keep them out of the tracked shots/ folder. */
 function saveShot(name, data) {
@@ -485,12 +486,16 @@ async function main() {
 
     const call = await connect(target.webSocketDebuggerUrl)
   await call('Runtime.enable')
-  const evaluate = async (expression) => {
-    const response = await call('Runtime.evaluate', {
-      expression,
-      returnByValue: true,
-      awaitPromise: true
-    })
+  const evaluate = async (expression, timeout = 30000) => {
+    const response = await call(
+      'Runtime.evaluate',
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true
+      },
+      timeout
+    )
     if (response.result?.exceptionDetails) throw new Error(JSON.stringify(response.result.exceptionDetails))
     return response.result?.result?.value
   }
@@ -512,7 +517,73 @@ async function main() {
   }
 
   const results = []
-  const check = (name, ok, detail) => results.push({ name, ok, detail })
+  let captureStarted = false
+  let failureCapture = Promise.resolve()
+
+  /**
+   * Record the state the first failed check saw.
+   *
+   * That state exists for one moment: the next step moves focus, opens another
+   * layer or unplugs the pad, and a rerun may not reproduce it. The reads are
+   * dispatched before the check returns, so they see the failure rather than
+   * whatever the suite did next. Each read is bounded on its own and captured
+   * with allSettled, so a frozen or exiting renderer still leaves the results
+   * summary on disk instead of taking the probe down with it.
+   */
+  const captureFailure = async (failed) => {
+    const report = {
+      capturedAt: new Date().toISOString(),
+      mode: DIST ? 'packaged' : 'dev',
+      failedCheck: failed,
+      route: null,
+      focus: null,
+      controller: null,
+      readErrors: [],
+      screenshot: `${RUN}-failure.jpg`,
+      screenshotError: null,
+      results: results.map((result) => ({ ...result })),
+      summary: {
+        ran: results.length,
+        passed: results.filter((result) => result.ok).length,
+        failed: results.filter((result) => !result.ok).length,
+        notRun: EXPECTED_CHECKS.filter((name) => !results.some((result) => result.name === name))
+      }
+    }
+
+    const reads = await Promise.allSettled([
+      evaluate(READ_ROUTE, 5000),
+      evaluate(READ_FOCUS, 5000),
+      evaluate(READ_STATE, 5000)
+    ])
+    const fields = ['route', 'focus', 'controller']
+    reads.forEach((read, index) => {
+      if (read.status === 'fulfilled') report[fields[index]] = read.value ?? null
+      else report.readErrors.push(`${fields[index]}: ${read.reason?.message ?? read.reason}`)
+    })
+
+    try {
+      const shot = await call('Page.captureScreenshot', { format: 'jpeg', quality: 85 }, 5000)
+      if (shot.result?.data) saveShot(report.screenshot, shot.result.data)
+      else report.screenshotError = 'the renderer returned no image data'
+    } catch (error) {
+      report.screenshotError = error.message
+    }
+
+    fs.mkdirSync(SHOT_DIR, { recursive: true })
+    const file = path.join(SHOT_DIR, `${RUN}-failure.json`)
+    fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`)
+    const shotNote = report.screenshotError ? `no screenshot — ${report.screenshotError}` : report.screenshot
+    console.log(`\nFirst failure captured — ${file} (${shotNote})`)
+  }
+
+  const check = (name, ok, detail) => {
+    results.push({ name, ok, detail })
+    if (ok || captureStarted) return
+    captureStarted = true
+    failureCapture = captureFailure({ name, detail }).catch((error) => {
+      console.error(`\nFailure diagnostics could not be written — ${error.message}`)
+    })
+  }
 
   // ---- Latched input at startup -------------------------------------------
   // A pad may report held buttons on its first poll. Seeding the edge trackers
@@ -1195,6 +1266,9 @@ async function main() {
   const dialogClosed = await route()
   check('a second B closes the dialog', !dialogClosed.modal, `modal=${dialogClosed.modal}`)
 
+  // A capture still running belongs to this run's evidence; finish it before
+  // the summary so the files and the exit status describe the same run.
+  await failureCapture
   const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'controller checks' })
   finishRun()
 
