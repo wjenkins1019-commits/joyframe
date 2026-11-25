@@ -217,6 +217,14 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
 
+      # Both input paths on the welcome name step once broke in opposite ways:
+      # a pad had no way forward, and typing was swallowed as a skip. This
+      # packaged probe proves each path against the shipped payload.
+      - name: Packaged app — welcome name step
+        id: intro-name-pad
+        timeout-minutes: 3
+        run: npm run verify:intro-name-pad
+
       # Runs last on purpose: failure() here covers the build, the icon check
       # and every packaged suite, while an upload placed after the build
       # could never see the later ones. dist.log is their shared context.

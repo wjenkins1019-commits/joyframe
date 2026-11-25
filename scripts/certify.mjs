@@ -43,6 +43,7 @@ const STAGES = [
   { script: 'dist', label: 'packaged installer' },
   { script: 'verify:dist', label: 'packaged app: demo and 1.0.0 profiles' },
   { script: 'verify:first-run', label: 'packaged app: first run' },
+  { script: 'verify:intro-name-pad', label: 'packaged app: welcome name step' },
   { script: 'verify:dist-pad', label: 'packaged app: controller suite' },
   { script: 'verify:installed-build', label: 'installed copy matches release/' }
 ]

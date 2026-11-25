@@ -26,7 +26,8 @@ import { getSettings, updateSettings } from '../src/main/services/settings.ts'
 
 const profile = path.resolve('.verify-intro/select-pad-profile')
 fs.rmSync(profile, { recursive: true, force: true })
-// The pad probe tests the ident and dropdown; the name step has its own check.
+// The pad probe tests the ident and dropdown; verify:intro-name-pad covers the
+// name step against the packaged build.
 {
   const db = openDatabase(path.join(profile, 'joyframe.db'))
   updateSettings(db, { playerName: 'Probe' })
