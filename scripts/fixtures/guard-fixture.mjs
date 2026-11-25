@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { preflight, reportChecks, reportUnfinishedRun } from '../cdp.mjs'
+import { preflight, reportChecks, reportCrash, reportUnfinishedRun } from '../cdp.mjs'
 import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
@@ -28,6 +28,16 @@ const [mode, work] = process.argv.slice(2)
 /** The names a complete probe reports; a pass must match them exactly. */
 const GUARD_CHECKS = ['first', 'second', 'third']
 const guardResults = (names) => names.map((name) => ({ name, ok: true, detail: 'ok' }))
+
+if (mode === 'crash') {
+  // A probe that dies before reportChecks: no PASS/FAIL list, only the error.
+  reportCrash({
+    subject: 'guard checks',
+    error: new Error('the app window never opened'),
+    artifacts: ['guard-artifact-attempt-1']
+  })
+  process.exit(1)
+}
 
 if (mode === 'failed-check') {
   // A red check whose detail contains a pipe, plus the artifact the job uploads.

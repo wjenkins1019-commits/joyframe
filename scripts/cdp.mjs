@@ -170,6 +170,17 @@ const escapeCommand = (text, property = false) => {
 /** Keep a detail on one table row; a literal pipe must not split the cell. */
 const tableCell = (text) => String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
 
+/** Append one section to the job summary, when this step has one. */
+function appendSummary(lines) {
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY
+  if (!summaryFile) return
+  try {
+    fs.appendFileSync(summaryFile, `${lines.join('\n')}\n`)
+  } catch (error) {
+    console.error(`Could not append to the job summary — ${error.message}`)
+  }
+}
+
 /**
  * Make a red probe readable from the run page.
  *
@@ -191,8 +202,6 @@ function reportFailure({ subject, total, failed, problems, artifacts }) {
     }
   }
 
-  const summaryFile = process.env.GITHUB_STEP_SUMMARY
-  if (!summaryFile) return
   const lines = [
     failed.length ? `## ${subject} — ${failed.length} of ${total} failed` : `## ${subject} — run incomplete`,
     ''
@@ -212,11 +221,29 @@ function reportFailure({ subject, total, failed, problems, artifacts }) {
   if (artifacts.length) {
     lines.push(`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '')
   }
-  try {
-    fs.appendFileSync(summaryFile, `${lines.join('\n')}\n`)
-  } catch (error) {
-    console.error(`Could not append to the job summary — ${error.message}`)
+  appendSummary(lines)
+}
+
+/**
+ * Record a probe that threw before reportChecks ran.
+ *
+ * The job still fails, but with no result list there is nothing for
+ * reportFailure to write and the run page shows only the raw log. Emit the
+ * error as an annotation and a summary naming the artifacts the job uploads,
+ * so an early crash is triaged like any other red run.
+ */
+export function reportCrash({ subject, error, artifacts = [] }) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    console.log(`::error title=${escapeCommand(`${subject} failed before reporting`, true)}::${escapeCommand(message)}`)
   }
+  const lines = [`## ${subject} — run failed before reporting`, '']
+  for (const line of message.split(/\r?\n/)) lines.push(`> ${line}`)
+  lines.push('')
+  if (artifacts.length) {
+    lines.push(`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '')
+  }
+  appendSummary(lines)
 }
 
 /**

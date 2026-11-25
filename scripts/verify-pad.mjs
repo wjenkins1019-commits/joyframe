@@ -38,6 +38,7 @@ import {
   createAppLog,
   failureArtifacts,
   MISSING_ELECTRON,
+  reportCrash,
   MISSING_PACKAGED,
   preflight,
   reportChecks,
@@ -1296,5 +1297,8 @@ async function main() {
 
 main().catch((error) => {
   console.error(error)
+  // A probe that dies before reportChecks still has to leave evidence on the
+  // run page: the error, and the artifacts this job uploads for it.
+  reportCrash({ subject: 'controller checks', error, artifacts: ARTIFACTS })
   process.exit(1)
 })

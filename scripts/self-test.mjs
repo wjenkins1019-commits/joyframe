@@ -57,6 +57,18 @@ const CASES = [
     summary: ['## guard checks — run incomplete', '1 of 3 declared guard checks never ran: third']
   },
   {
+    mode: 'crash',
+    name: 'a probe that throws before reporting is annotated and summarized',
+    exit: 1,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: ['::error title=guard checks failed before reporting::the app window never opened'],
+    summary: [
+      '## guard checks — run failed before reporting',
+      '> the app window never opened',
+      '`guard-artifact-attempt-1`'
+    ]
+  },
+  {
     mode: 'failed-check',
     name: 'a failed check is annotated and summarized with its artifact',
     exit: 1,
