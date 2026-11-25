@@ -25,6 +25,7 @@ import {
   createAppLog,
   createSession,
   delay,
+  failureArtifacts,
   findWindow,
   MISSING_PACKAGED,
   preflight,
@@ -525,7 +526,11 @@ async function main() {
     problems.length ? problems.slice(0, 5).join(' | ') : 'all boots clean'
   )
 
-  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'packaged-build checks' })
+  const complete = reportChecks(results, {
+    expected: EXPECTED_CHECKS,
+    subject: 'packaged-build checks',
+    artifacts: failureArtifacts()
+  })
   process.exit(complete ? 0 : 1)
 }
 

@@ -12,9 +12,9 @@
 # that holds the game page's back-button checks, which is why it cannot stay a
 # local-only command. The installer job builds the package and then runs the
 # same controller suite against the packaged exe, so CI covers the asar payload
-# and not only dev Electron. Probes that need an installed copy, or the separate
-# packaged profiles in `verify:dist` and `verify:first-run`, still run through
-# `npm run certify` on a machine that has one.
+# and not only dev Electron. The separate packaged profiles in `verify:dist` and
+# `verify:first-run` run here too; probes that need an installed copy still run
+# through `npm run certify` on a machine that has one.
 #
 # Node is pinned to the version the suite is proven on (26): the services use
 # `node:sqlite` and the probes use the built-in `WebSocket`, both of which a
@@ -173,9 +173,43 @@ jobs:
           # skips unless this is on.
           include-hidden-files: true
 
+      # The package from above is already fresh; these cover its demo and ROM
+      # payloads, the 1.0.0 upgrade path and a clean first launch without
+      # another build.
+      - name: Packaged app — demo, ROM and 1.0.0 profiles
+        id: dist-profiles
+        env:
+          # Both artifacts this job uploads when the profile probe fails.
+          JF_FAILURE_ARTIFACTS: dist-profiles-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
+        run: npm run verify:dist
+
+      - name: Upload packaged profile artifacts
+        if: failure() && steps.dist-profiles.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-profiles-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-dist.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
+      - name: Packaged app — first run
+        id: first-run
+        env:
+          JF_FAILURE_ARTIFACTS: first-run-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
+        run: npm run verify:first-run
+
+      - name: Upload first-run artifacts
+        if: failure() && steps.first-run.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-first-run.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
       # Runs last on purpose: failure() here covers the build, the icon check
-      # and the packaged suite alike, while an upload placed after the build
-      # could never see the later two. dist.log is their shared context.
+      # and every packaged suite, while an upload placed after the build
+      # could never see the later ones. dist.log is their shared context.
       - name: Upload installer build log
         if: failure()
         uses: actions/upload-artifact@v4

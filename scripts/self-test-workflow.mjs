@@ -45,14 +45,33 @@ const EXPECTED_ARTIFACTS = [
     job: 'installer',
     paths: ['.verify-shots', '.verify-logs/verify-dist-pad.log'],
     hidden: true
+  },
+  {
+    name: `dist-profiles-artifacts-attempt-${ATTEMPT}`,
+    label: 'the packaged profile artifact keeps its name, path and hidden files',
+    job: 'installer',
+    paths: ['.verify-logs/verify-dist.log'],
+    hidden: true
+  },
+  {
+    name: `first-run-artifacts-attempt-${ATTEMPT}`,
+    label: 'the first-run artifact keeps its name, path and hidden files',
+    job: 'installer',
+    paths: ['.verify-logs/verify-first-run.log'],
+    hidden: true
   }
 ]
+
+const DIST_PROFILES = EXPECTED_ARTIFACTS[3]
+const FIRST_RUN = EXPECTED_ARTIFACTS[4]
 
 const EXPECTED_CHECKS = [
   ...EXPECTED_ARTIFACTS.map((artifact) => artifact.label),
   'every failure upload is gated on failure() and attempt-suffixed',
   'every failure upload of a dot-directory opts into hidden files',
   'the installer log uploads on any installer failure, after the packaged suite',
+  'the packaged profile probes run after the packaged controller and before the log upload',
+  'each packaged profile upload follows its probe and only runs on that probe failure',
   'each probe step names the artifacts its summary lists'
 ]
 
@@ -148,6 +167,33 @@ check(
     : 'upload missing'
 )
 
+const distProbeIndex = installerSteps.findIndex((step) => step.id === 'dist-profiles')
+const firstRunProbeIndex = installerSteps.findIndex((step) => step.id === 'first-run')
+const distUploadIndex = installerSteps.findIndex((step) => artifactName(step) === DIST_PROFILES.name)
+const firstRunUploadIndex = installerSteps.findIndex((step) => artifactName(step) === FIRST_RUN.name)
+check(
+  'the packaged profile probes run after the packaged controller and before the log upload',
+  packagedIndex >= 0 &&
+    distProbeIndex > packagedIndex &&
+    firstRunProbeIndex > distProbeIndex &&
+    distUploadIndex > distProbeIndex &&
+    firstRunUploadIndex > firstRunProbeIndex &&
+    logIndex > firstRunUploadIndex,
+  `packaged ${packagedIndex}, dist ${distProbeIndex}, dist upload ${distUploadIndex}, first run ${firstRunProbeIndex}, first-run upload ${firstRunUploadIndex}, log ${logIndex}`
+)
+
+const distUpload = uploads.find((upload) => artifactName(upload.step) === DIST_PROFILES.name)
+const firstRunUpload = uploads.find((upload) => artifactName(upload.step) === FIRST_RUN.name)
+const gatesOnProbe = (upload, stepId) =>
+  Boolean(upload) &&
+  condition(upload.step).includes('failure()') &&
+  condition(upload.step).includes(`steps.${stepId}.outcome == 'failure'`)
+check(
+  'each packaged profile upload follows its probe and only runs on that probe failure',
+  gatesOnProbe(distUpload, 'dist-profiles') && gatesOnProbe(firstRunUpload, 'first-run'),
+  [distUpload, firstRunUpload].map((upload) => (upload ? condition(upload.step) : 'missing')).join(' | ')
+)
+
 /** The artifact names a probe step exports to its failure summary. */
 const envArtifacts = (step) =>
   String(step?.env?.JF_FAILURE_ARTIFACTS ?? '')
@@ -157,14 +203,24 @@ const envArtifacts = (step) =>
 const devStep = (workflow.jobs['controller-checks']?.steps ?? []).find((step) => step.id === 'controller')
 const iconStep = installerSteps.find((step) => step.run === 'npm run verify:installer')
 const packagedStep = installerSteps.find((step) => step.id === 'packaged-controller')
+const distStep = installerSteps.find((step) => step.id === 'dist-profiles')
+const firstRunStep = installerSteps.find((step) => step.id === 'first-run')
 const namesIn = (step, names) => names.every((name) => envArtifacts(step).includes(name))
 const envSummary = (label, step) => `${label}: ${envArtifacts(step).join(',') || '(unset)'}`
 check(
   'each probe step names the artifacts its summary lists',
   namesIn(devStep, [EXPECTED_ARTIFACTS[0].name]) &&
     namesIn(iconStep, [EXPECTED_ARTIFACTS[1].name]) &&
-    namesIn(packagedStep, [EXPECTED_ARTIFACTS[2].name, EXPECTED_ARTIFACTS[1].name]),
-  [envSummary('dev', devStep), envSummary('icon', iconStep), envSummary('packaged', packagedStep)].join(' | ')
+    namesIn(packagedStep, [EXPECTED_ARTIFACTS[2].name, EXPECTED_ARTIFACTS[1].name]) &&
+    namesIn(distStep, [DIST_PROFILES.name, EXPECTED_ARTIFACTS[1].name]) &&
+    namesIn(firstRunStep, [FIRST_RUN.name, EXPECTED_ARTIFACTS[1].name]),
+  [
+    envSummary('dev', devStep),
+    envSummary('icon', iconStep),
+    envSummary('packaged', packagedStep),
+    envSummary('dist', distStep),
+    envSummary('first run', firstRunStep)
+  ].join(' | ')
 )
 
 const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })

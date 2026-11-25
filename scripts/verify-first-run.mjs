@@ -23,6 +23,7 @@ import {
   createAppLog,
   createSession,
   delay,
+  failureArtifacts,
   findWindow,
   MISSING_PACKAGED,
   preflight,
@@ -290,7 +291,11 @@ async function main() {
 
   removeDir(path.resolve(ROOT))
 
-  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'first-run checks' })
+  const complete = reportChecks(results, {
+    expected: EXPECTED_CHECKS,
+    subject: 'first-run checks',
+    artifacts: failureArtifacts()
+  })
   process.exit(complete ? 0 : 1)
 }
 
