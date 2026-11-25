@@ -11,6 +11,38 @@ import path from 'node:path'
 
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** The wall clock waitForValue uses; a test substitutes its own to skip real time. */
+export const REAL_CLOCK = { now: () => Date.now(), sleep: (ms) => delay(ms) }
+
+/**
+ * Poll `evaluate(expression)` until it returns something truthy.
+ *
+ * The first launch after an install can spend several seconds before the page
+ * paints, so a fixed sleep reads a window that is not there yet and reports a
+ * build that lost its markup. Nothing here waits a guessed amount: it asks
+ * again until the value appears, and only the deadline is a failure.
+ *
+ * A reload destroys the execution context mid-poll, so a rejected read means
+ * "not yet" as well. Time is read from `clock`, which lets a test prove a
+ * ten-second wait without spending ten seconds.
+ *
+ * Returns null when the budget runs out, so the caller names what never
+ * appeared instead of hanging.
+ */
+export async function waitForValue(evaluate, expression, { timeout, interval = 100, clock = REAL_CLOCK }) {
+  const deadline = clock.now() + timeout
+  while (clock.now() < deadline) {
+    try {
+      const value = await evaluate(expression)
+      if (value) return value
+    } catch {
+      /* the reload replaced the execution context; ask again */
+    }
+    await clock.sleep(interval)
+  }
+  return null
+}
+
 /** How long one DevTools command may go unanswered before the probe gives up. */
 const CALL_TIMEOUT_MS = 30000
 

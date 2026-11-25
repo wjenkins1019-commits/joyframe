@@ -1,6 +1,20 @@
 /** Types for the parts of cdp.mjs the TypeScript probes import. */
 export declare const delay: (ms: number) => Promise<void>
 
+export interface Clock {
+  now: () => number
+  sleep: (ms: number) => Promise<void>
+}
+
+export declare const REAL_CLOCK: Clock
+
+/** Polls `evaluate(expression)` until it is truthy, or returns null at the deadline. */
+export declare function waitForValue(
+  evaluate: (expression: string) => Promise<any>,
+  expression: string,
+  options: { timeout: number; interval?: number; clock?: Clock }
+): Promise<any>
+
 export interface CdpSession {
   call: (method: string, params?: Record<string, unknown>, timeout?: number) => Promise<any>
   close: () => void

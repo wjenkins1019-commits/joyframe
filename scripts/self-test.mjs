@@ -116,6 +116,20 @@ const CASES = [
     stdout: ['2/2 guard checks passed']
   },
   {
+    // The failure this suite was built for: a cold launch whose bridge arrives
+    // long after the fixed sleeps the probe used to trust.
+    mode: 'late-bridge',
+    name: 'a bridge that appears ten seconds late is still awaited',
+    exit: 0,
+    stdout: ['late bridge: value=bridge waited=10000ms']
+  },
+  {
+    mode: 'never-bridge',
+    name: 'a bridge that never appears ends at the deadline instead of hanging',
+    exit: 0,
+    stdout: ['missing bridge: value=null waited=30000ms']
+  },
+  {
     mode: 'missing-prereq',
     name: 'a missing prerequisite exits 2 with the file and its remedy',
     exit: 2,

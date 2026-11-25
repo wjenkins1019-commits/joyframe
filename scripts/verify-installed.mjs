@@ -19,7 +19,15 @@
 import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createAppLog, createSession, delay, findWindow, preflight, reportUnfinishedRun } from './cdp.mjs'
+import {
+  createAppLog,
+  createSession,
+  delay,
+  findWindow,
+  preflight,
+  reportUnfinishedRun,
+  waitForValue
+} from './cdp.mjs'
 
 const finishRun = reportUnfinishedRun('verify:installed')
 const appLog = createAppLog('verify-installed')
@@ -56,33 +64,13 @@ const { call, close, evaluate } = await createSession(target)
 /** How long a cold first launch may take to reach a painted state. */
 const BOOT_TIMEOUT_MS = 30000
 
-/**
- * Poll until `expression` returns something truthy.
- *
- * A reload destroys the execution context mid-poll, so a rejected read means
- * "not yet", not "the app is broken"; only a timeout is a failure.
- */
-async function readValue(expression, timeout) {
-  const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    try {
-      const value = await evaluate(expression)
-      if (value) return value
-    } catch {
-      /* the reload replaced the execution context; ask again */
-    }
-    await delay(100)
-  }
-  return null
-}
-
 const INTRO_PHASE = `document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`
 const phase = () => evaluate(INTRO_PHASE).catch(() => null)
 
 // Wait out the cold start before touching settings: a reload issued while the
 // window is still booting can be dropped, which would leave the intro to run
 // for the unnamed profile instead of the ident this probe checks.
-if (!(await readValue(`Boolean(window.joyframe?.settings)`, BOOT_TIMEOUT_MS))) {
+if (!(await waitForValue(evaluate, `Boolean(window.joyframe?.settings)`, { timeout: BOOT_TIMEOUT_MS }))) {
   throw new Error('installed app never exposed its settings bridge')
 }
 
@@ -91,7 +79,7 @@ if (!(await readValue(`Boolean(window.joyframe?.settings)`, BOOT_TIMEOUT_MS))) {
 await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
 await call('Page.reload')
 
-const seen = await readValue(INTRO_PHASE, BOOT_TIMEOUT_MS)
+const seen = await waitForValue(evaluate, INTRO_PHASE, { timeout: BOOT_TIMEOUT_MS })
 const captured = await call('Page.captureScreenshot', { format: 'png' })
 if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
 const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
@@ -118,7 +106,11 @@ await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
 await call('Page.reload')
 // "No intro" only proves something once the shell has painted: an empty
 // document on a slow boot would otherwise pass for a build honouring "off".
-const offPainted = await readValue(`Boolean(document.querySelector('[data-jf-view]'))`, BOOT_TIMEOUT_MS)
+const offPainted = await waitForValue(
+  evaluate,
+  `Boolean(document.querySelector('[data-jf-view]'))`,
+  { timeout: BOOT_TIMEOUT_MS }
+)
 let offPlayed = false
 const offDeadline = Date.now() + 2600
 while (Date.now() < offDeadline) {

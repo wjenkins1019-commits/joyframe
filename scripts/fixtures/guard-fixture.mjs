@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { preflight, reportChecks, reportCrash, reportUnfinishedRun } from '../cdp.mjs'
+import { preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
 import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
@@ -102,6 +102,50 @@ if (mode === 'missing-prereq') {
     needs: [{ file: 'C:/definitely-not-here/JOYFRAME.exe', remedy: 'Run `npm run nope` to fix this.' }]
   })
   process.exit(0)
+}
+
+/**
+ * A clock that moves only when something sleeps on it, so a wait budget of
+ * seconds costs no real time. Returning a value here is the only way the two
+ * slow-bridge modes can end, which is what makes them evidence.
+ */
+function virtualClock() {
+  let elapsed = 0
+  return {
+    clock: {
+      now: () => elapsed,
+      sleep: async (ms) => {
+        elapsed += ms
+      }
+    },
+    elapsed: () => elapsed
+  }
+}
+
+if (mode === 'late-bridge') {
+  // The bridge a cold launch withholds for ten seconds. The poll must still be
+  // running at the ten-second mark and return the value, not give up first.
+  const { clock, elapsed } = virtualClock()
+  const value = await waitForValue(
+    async () => {
+      // The reload that precedes the bridge destroys the execution context.
+      if (elapsed() < 5000) throw new Error('Execution context was destroyed')
+      return elapsed() < 10000 ? null : 'bridge'
+    },
+    'window.joyframe?.settings',
+    { timeout: 30000, clock }
+  )
+  console.log(`late bridge: value=${value} waited=${elapsed()}ms`)
+  process.exit(value === 'bridge' ? 0 : 1)
+}
+
+if (mode === 'never-bridge') {
+  // Nothing ever appears: the wait must end at its deadline with null, so the
+  // probe reports what never showed up instead of hanging.
+  const { clock, elapsed } = virtualClock()
+  const value = await waitForValue(async () => null, 'window.joyframe?.settings', { timeout: 30000, clock })
+  console.log(`missing bridge: value=${value} waited=${elapsed()}ms`)
+  process.exit(value === null ? 0 : 1)
 }
 
 if (mode === 'busy-port') {
