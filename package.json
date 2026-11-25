@@ -36,7 +36,8 @@
     "verify:installed-build": "node scripts/verify-installed-build.mjs",
     "verify:installed": "node scripts/verify-installed-build.mjs && node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",
-    "self-test": "node scripts/self-test.mjs",
+    "self-test": "node scripts/self-test.mjs && node scripts/self-test-workflow.mjs",
+    "self-test:workflow": "node scripts/self-test-workflow.mjs",
     "check": "npm run typecheck && npm run self-test && npm run verify:icons && npm run smoke && npm run verify:freshness && npm run verify:pad && npm run verify:intro && npm run verify:intro-ui && npm run verify:intro-pad && node scripts/report-packaged-freshness.mjs",
     "check:installed": "npm run check && npm run verify:installed-build",
     "certify": "node scripts/certify.mjs"
@@ -91,6 +92,7 @@
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
+    "js-yaml": "^4.3.2",
     "png-to-ico": "^3.0.2",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
