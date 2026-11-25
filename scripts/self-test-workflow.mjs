@@ -72,7 +72,8 @@ const EXPECTED_CHECKS = [
   'the installer log uploads on any installer failure, after the packaged suite',
   'the packaged profile probes run after the packaged controller and before the log upload',
   'each packaged profile upload follows its probe and only runs on that probe failure',
-  'each probe step names the artifacts its summary lists'
+  'each probe step names the artifacts its summary lists',
+  'every installer probe has a timeout that fits inside the job'
 ]
 
 /** A step's `path:` is a block scalar; compare the non-empty lines as a set. */
@@ -221,6 +222,20 @@ check(
     envSummary('dist', distStep),
     envSummary('first run', firstRunStep)
   ].join(' | ')
+)
+
+// A hung probe must fail on its own timeout while the job still runs, or the
+// job timeout ends the job before its failure upload. Every probe needs a
+// timeout, and together they must fit inside the job.
+const probeSteps = installerSteps.filter((step) => step.run?.startsWith('npm run verify:'))
+const probeTimeouts = probeSteps.map((step) => step['timeout-minutes'])
+const probeMinutes = probeTimeouts.reduce((total, minutes) => total + minutes, 0)
+check(
+  'every installer probe has a timeout that fits inside the job',
+  probeTimeouts.length > 0 &&
+    probeTimeouts.every((minutes) => Number.isInteger(minutes) && minutes > 0) &&
+    probeMinutes < workflow.jobs.installer['timeout-minutes'],
+  `${probeSteps.map((step) => `${step.id ?? step.name} ${step['timeout-minutes'] ?? '(unset)'}m`).join(' | ')} — ${probeMinutes}m total`
 )
 
 const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })

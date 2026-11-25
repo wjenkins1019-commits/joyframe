@@ -143,7 +143,11 @@ jobs:
           set -o pipefail
           npm run dist 2>&1 | tee dist.log
 
+      # A step timeout fails just that probe while the job keeps running, so
+      # its failure uploads still run; a job timeout would end the job first.
+      # The workflow self-test keeps their total inside the job budget.
       - name: Prove the installer used the project icon
+        timeout-minutes: 2
         env:
           # The probe prints this name into the failure summary; the upload at
           # the end of the job uses the same name.
@@ -155,6 +159,7 @@ jobs:
       # run unless the asar matches the current out/.
       - name: Controller suite against the packaged build
         id: packaged-controller
+        timeout-minutes: 5
         env:
           # Both artifacts this job uploads when the packaged suite fails.
           JF_FAILURE_ARTIFACTS: controller-suite-packaged-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
@@ -178,6 +183,7 @@ jobs:
       # another build.
       - name: Packaged app — demo, ROM and 1.0.0 profiles
         id: dist-profiles
+        timeout-minutes: 5
         env:
           # Both artifacts this job uploads when the profile probe fails.
           JF_FAILURE_ARTIFACTS: dist-profiles-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
@@ -194,6 +200,7 @@ jobs:
 
       - name: Packaged app — first run
         id: first-run
+        timeout-minutes: 3
         env:
           JF_FAILURE_ARTIFACTS: first-run-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
         run: npm run verify:first-run
