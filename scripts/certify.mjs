@@ -35,7 +35,9 @@ const INSTALLED_ASAR = path.join(INSTALLED_DIR, 'resources', 'app.asar')
  * dev build and the guards; the build is repeated so the package is made from
  * sources regardless of what an earlier stage happened to leave in out/; then
  * the installer, the packaged app, a first run on a clean profile, the
- * controller suite against the package, and finally the machine-wide copy.
+ * controller suite against the package, the machine-wide bytes, and finally
+ * that installed copy booted — a hash proves the right bytes, not that they
+ * still show an intro and open the library.
  */
 const STAGES = [
   { script: 'check', label: 'dev-build checks and suite guards' },
@@ -45,7 +47,8 @@ const STAGES = [
   { script: 'verify:first-run', label: 'packaged app: first run' },
   { script: 'verify:intro-name-pad', label: 'packaged app: welcome name step' },
   { script: 'verify:dist-pad', label: 'packaged app: controller suite' },
-  { script: 'verify:installed-build', label: 'installed copy matches release/' }
+  { script: 'verify:installed-build', label: 'installed copy matches release/' },
+  { script: 'verify:installed', label: 'installed app: intro, skip and cold start' }
 ]
 
 const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version

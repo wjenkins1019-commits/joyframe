@@ -57,80 +57,98 @@ const app = spawn(exe, [
   '--no-sandbox'
 ], { stdio: appLog.stdio })
 
-const target = await findWindow(port)
-if (!target) throw new Error('installed app did not expose a renderer')
-const { call, close, evaluate } = await createSession(target)
-
 /** How long a cold first launch may take to reach a painted state. */
 const BOOT_TIMEOUT_MS = 30000
 
 const INTRO_PHASE = `document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`
-const phase = () => evaluate(INTRO_PHASE).catch(() => null)
 
-// Wait out the cold start before touching settings: a reload issued while the
-// window is still booting can be dropped, which would leave the intro to run
-// for the unnamed profile instead of the ident this probe checks.
-if (!(await waitForValue(evaluate, `Boolean(window.joyframe?.settings)`, { timeout: BOOT_TIMEOUT_MS }))) {
-  throw new Error('installed app never exposed its settings bridge')
-}
-
-// The installed copy starts with an unnamed profile on a fresh directory; name
-// it and reload so this probe exercises the ident rather than the name step.
-await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
-await call('Page.reload')
-
-const seen = await waitForValue(evaluate, INTRO_PHASE, { timeout: BOOT_TIMEOUT_MS })
-const captured = await call('Page.captureScreenshot', { format: 'png' })
-if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
-const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
-
-// A real key press must dismiss the installed build's intro immediately.
-const started = Date.now()
-await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
-await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+// Readings taken inside the try and asserted after teardown, so a failed check
+// still stops the instance this probe started.
+let session = null
+let seen = null
+let skipMs = null
 let cleared = false
-while (Date.now() - started < 2500) {
-  if ((await phase()) === null) { cleared = true; break }
-  await delay(60)
-}
-const skipMs = Date.now() - started
-const detailOpened = await evaluate(`Boolean(document.querySelector('[data-jf-detail]'))`)
-const appVisible = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
-console.log('installed intro phase:', seen)
-console.log('installed intro text:', JSON.stringify(text))
-console.log('cleared after key press ms:', cleared ? skipMs : null, 'detail opened:', detailOpened, 'app visible:', appVisible)
+let detailOpened = null
+let appVisible = null
 
-// The installed build must also expose the new mode and honour "off".
-const mode = await evaluate(`window.joyframe.settings.get().then((s) => s.introMode)`)
-await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
-await call('Page.reload')
-// "No intro" only proves something once the shell has painted: an empty
-// document on a slow boot would otherwise pass for a build honouring "off".
-const offPainted = await waitForValue(
-  evaluate,
-  `Boolean(document.querySelector('[data-jf-view]'))`,
-  { timeout: BOOT_TIMEOUT_MS }
-)
-let offPlayed = false
-const offDeadline = Date.now() + 2600
-while (Date.now() < offDeadline) {
-  if (await phase()) {
-    offPlayed = true
-    break
+try {
+  const target = await findWindow(port)
+  if (!target) throw new Error('installed app did not expose a renderer')
+  session = await createSession(target)
+  const { call, evaluate } = session
+  const phase = () => evaluate(INTRO_PHASE).catch(() => null)
+
+  // Wait out the cold start before touching settings: a reload issued while the
+  // window is still booting can be dropped, which would leave the intro to run
+  // for the unnamed profile instead of the ident this probe checks.
+  if (!(await waitForValue(evaluate, `Boolean(window.joyframe?.settings)`, { timeout: BOOT_TIMEOUT_MS }))) {
+    throw new Error('installed app never exposed its settings bridge')
   }
-  await delay(100)
-}
-const offApp = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
-console.log('installed introMode:', JSON.stringify(mode), 'off mode played:', offPlayed, 'app visible:', offApp)
-if (mode !== 'always') throw new Error(`unexpected installed introMode ${JSON.stringify(mode)}`)
-if (!offPainted) throw new Error('installed app shell never painted with intro off')
-if (offPlayed) throw new Error('installed build ignored introMode off')
-if (!offApp) throw new Error('installed app missing with intro off')
 
-close()
-try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
-await delay(1200)
-try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
+  // The installed copy starts with an unnamed profile on a fresh directory; name
+  // it and reload so this probe exercises the ident rather than the name step.
+  await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
+  await call('Page.reload')
+
+  seen = await waitForValue(evaluate, INTRO_PHASE, { timeout: BOOT_TIMEOUT_MS })
+  const captured = await call('Page.captureScreenshot', { format: 'png' })
+  if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
+  const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
+
+  // A real key press must dismiss the installed build's intro immediately.
+  const started = Date.now()
+  await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+  await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+  while (Date.now() - started < 2500) {
+    if ((await phase()) === null) { cleared = true; break }
+    await delay(60)
+  }
+  skipMs = Date.now() - started
+  detailOpened = await evaluate(`Boolean(document.querySelector('[data-jf-detail]'))`)
+  appVisible = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
+  console.log('installed intro phase:', seen)
+  console.log('installed intro text:', JSON.stringify(text))
+  console.log('cleared after key press ms:', cleared ? skipMs : null, 'detail opened:', detailOpened, 'app visible:', appVisible)
+
+  // The installed build must also expose the new mode and honour "off".
+  const mode = await evaluate(`window.joyframe.settings.get().then((s) => s.introMode)`)
+  await evaluate(`window.joyframe.settings.update({ introMode: 'off' })`)
+  await call('Page.reload')
+  // "No intro" only proves something once the shell has painted: an empty
+  // document on a slow boot would otherwise pass for a build honouring "off".
+  const offPainted = await waitForValue(
+    evaluate,
+    `Boolean(document.querySelector('[data-jf-view]'))`,
+    { timeout: BOOT_TIMEOUT_MS }
+  )
+  let offPlayed = false
+  const offDeadline = Date.now() + 2600
+  while (Date.now() < offDeadline) {
+    if (await phase()) {
+      offPlayed = true
+      break
+    }
+    await delay(100)
+  }
+  const offApp = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
+  console.log('installed introMode:', JSON.stringify(mode), 'off mode played:', offPlayed, 'app visible:', offApp)
+  if (mode !== 'always') throw new Error(`unexpected installed introMode ${JSON.stringify(mode)}`)
+  if (!offPainted) throw new Error('installed app shell never painted with intro off')
+  if (offPlayed) throw new Error('installed build ignored introMode off')
+  if (!offApp) throw new Error('installed app missing with intro off')
+} finally {
+  /*
+   * Teardown cannot depend on a green run. A gate that exhausts its deadline
+   * throws before the assertions below were reached, and the surviving app
+   * keeps port 9268 — so the next attempt would exit 2 with "already accepting
+   * connections" and read as a machine-not-ready skip instead of the failure
+   * that actually happened.
+   */
+  try { session?.close() } catch {}
+  try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
+  await delay(1200)
+  try { fs.rmSync(profile, { recursive: true, force: true }) } catch {}
+}
 
 if (seen !== 'play') throw new Error('installed app did not show the intro')
 if (!cleared) throw new Error('installed intro never cleared')
