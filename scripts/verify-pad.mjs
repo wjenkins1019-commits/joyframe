@@ -867,12 +867,16 @@ async function main() {
     }
     return false
   }
-  /** Hold an input for `ms`, release it, then let focus settle. */
+  /**
+   * Hold an input for `ms`, release it, then let focus settle.
+   *
+   * The release is scheduled in the page: a DevTools round trip between the
+   * press and release can stretch a short tap past the 400ms repeat delay and
+   * add a second step, the same flake the handover now avoids.
+   */
   const hold = async (down, up, ms) => {
-    await evaluate(down)
-    await delay(ms)
-    await evaluate(up)
-    await delay(400)
+    await evaluate(`(() => { ${down}; setTimeout(() => { ${up} }, ${ms}); return true })()`)
+    await delay(ms + 400)
   }
   const press = (button, ms) =>
     hold(`(window.__trigger(${button}, 1), true)`, `(window.__trigger(${button}, 0), true)`, ms)
