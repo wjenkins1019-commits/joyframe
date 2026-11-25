@@ -190,6 +190,12 @@ async function main() {
     if (target) {
       const { events, evaluate, read } = await createSession(target)
 
+      // This probe covers the empty first-run library, not the welcome flow:
+      // quiet the intro and name step before reading the shell.
+      await evaluate(`window.joyframe.settings.update({ playerName: 'Probe', introMode: 'off' })`)
+      await evaluate('location.reload()')
+      await delay(800)
+
       const info = await evaluate('window.joyframe.app.info()')
       check(
         'the app is using the temporary profile, not the real user data',

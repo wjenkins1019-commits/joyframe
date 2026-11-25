@@ -236,6 +236,19 @@ await check('Launch command appends the ROM when the template never mentions it'
   // The switch is the opt-out for opening the emulator's own window instead.
   const bareOnly = { ...game, extra: { ...game.extra, launchRomDirectly: false } }
   assert.deepEqual(buildLaunchCommand(db, bareOnly).args, ['--fullscreen'])
+
+  // The global Emulation setting is the default when a game has no explicit
+  // choice, and a per-game switch still wins over it.
+  const settings = getSettings(db)
+  assert.deepEqual(
+    buildLaunchCommand(db, game, { ...settings, launchRomsDirectly: false }).args,
+    ['--fullscreen']
+  )
+  const explicitDirect = { ...game, extra: { ...game.extra, launchRomDirectly: true } }
+  assert.deepEqual(
+    buildLaunchCommand(db, explicitDirect, { ...settings, launchRomsDirectly: false }).args,
+    ['--fullscreen', chrono.romPath]
+  )
 })
 
 console.log('\n[3] Steam integration')

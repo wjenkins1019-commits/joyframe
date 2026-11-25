@@ -22,10 +22,16 @@ import { assertBuildFresh } from './build-fresh.mjs'
 const finishRun = reportUnfinishedRun('verify:intro-pad')
 const appLog = createAppLog('verify-intro-pad')
 import { openDatabase } from '../src/main/services/db.ts'
-import { getSettings } from '../src/main/services/settings.ts'
+import { getSettings, updateSettings } from '../src/main/services/settings.ts'
 
 const profile = path.resolve('.verify-intro/select-pad-profile')
 fs.rmSync(profile, { recursive: true, force: true })
+// The pad probe tests the ident and dropdown; the name step has its own check.
+{
+  const db = openDatabase(path.join(profile, 'joyframe.db'))
+  updateSettings(db, { playerName: 'Probe' })
+  db.close()
+}
 const port = 9272
 
 await preflight({ label: 'verify:intro-pad', port, needs: DEV_BOOT_NEEDS })
@@ -220,19 +226,28 @@ for (let step = 0; step < 6 && entered && entered.x < 200; step++) {
   entered = await evaluate(focused)
 }
 let onIntro = false
-for (let step = 0; step < 40 && !onIntro; step++) {
+for (let step = 0; step < 60 && !onIntro; step++) {
   onIntro = await evaluate(`document.querySelector('select[data-nav-focus]') === window.introSelect()`)
   if (onIntro) break
   const state = await evaluate(focused)
   if (!state) break
+  // Text fields own the keyboard, so a controller leaves them with Escape
+  // before the next direction press can continue toward the dropdown.
+  if (state.tag === 'INPUT' || state.tag === 'TEXTAREA') {
+    await key('Escape', 'Escape', 27)
+  }
   const target = await evaluate(`(() => {
     const el = window.introSelect()
     if (!el) return null
     const r = el.getBoundingClientRect()
-    return { y: r.top + r.height / 2 }
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })()`)
   if (!target) break
-  await pad(state.y > target.y ? 12 : 13)
+  // The form's right-aligned switches and the left-aligned dropdown share a
+  // band, so close the horizontal gap before stepping vertically past it.
+  const band = Math.abs(state.y - target.y) < 150
+  const direction = band && state.x > target.x + 30 ? 14 : band && state.x < target.x - 30 ? 15 : state.y > target.y ? 12 : 13
+  await pad(direction)
 }
 console.log('pad navigation reached the Startup intro dropdown:', onIntro)
 if (!onIntro) throw new Error('pad navigation never reached the Startup intro dropdown')

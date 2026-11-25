@@ -23,6 +23,7 @@ import { CreditsDialog } from './components/Credits'
 import { ControllerBar, Toasts } from './components/Chrome'
 import { Button, cx } from './components/ui'
 import { useSpatialNavigation } from './lib/navigation'
+import { applyThemePreset } from './lib/themes'
 import { useStore } from './state/store'
 
 const VIEW_ORDER: ViewId[] = ['home', 'library', 'collections', 'steam', 'emulators', 'stats']
@@ -109,10 +110,11 @@ function AppShell(): React.JSX.Element {
     }
   }, [])
 
-  // Accent colour is a CSS custom property, so Tailwind utilities follow it.
+  // The palette is a set of CSS custom properties, so Tailwind utilities follow
+  // both the chosen theme and its accent colour.
   useEffect(() => {
-    document.documentElement.style.setProperty('--color-jf-red', settings.themeAccent)
-  }, [settings.themeAccent])
+    applyThemePreset(settings.theme, settings.themeAccent)
+  }, [settings.theme, settings.themeAccent])
 
   // Play the hand-off once per entry into Console Mode, and never for users
   // who asked for reduced motion.

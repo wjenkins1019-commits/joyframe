@@ -14,6 +14,17 @@
 :root {
   color-scheme: dark;
   --jf-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Defaults match the Crimson palette; applyThemePreset() overrides them. */
+  --jf-bg: #0b0d10;
+  --jf-glow-a: rgba(215, 25, 53, 0.22);
+  --jf-glow-b: rgba(30, 108, 176, 0.16);
+  --jf-glow-c: rgba(120, 32, 160, 0.1);
+  --jf-card-a: rgba(40, 44, 52, 0.6);
+  --jf-card-b: rgba(14, 16, 20, 0.74);
+  --jf-panel-a: rgba(30, 34, 40, 0.55);
+  --jf-panel-b: rgba(12, 14, 18, 0.62);
+  --jf-glass-a: rgba(32, 35, 42, 0.55);
+  --jf-glass-b: rgba(10, 12, 16, 0.68);
 }
 
 html,
@@ -30,10 +41,10 @@ body,
  */
 body {
   background:
-    radial-gradient(1200px 780px at 6% -14%, rgba(215, 25, 53, 0.22), transparent 62%),
-    radial-gradient(1000px 720px at 98% 2%, rgba(30, 108, 176, 0.16), transparent 58%),
-    radial-gradient(900px 700px at 58% 112%, rgba(120, 32, 160, 0.1), transparent 62%),
-    #0b0d10;
+    radial-gradient(1200px 780px at 6% -14%, var(--jf-glow-a), transparent 62%),
+    radial-gradient(1000px 720px at 98% 2%, var(--jf-glow-b), transparent 58%),
+    radial-gradient(900px 700px at 58% 112%, var(--jf-glow-c), transparent 62%),
+    var(--jf-bg);
   background-attachment: fixed;
   color: #fff;
   font-family: var(--font-sans);
@@ -112,7 +123,7 @@ button {
 }
 
 .jf-card {
-  background: linear-gradient(155deg, rgba(40, 44, 52, 0.6) 0%, rgba(14, 16, 20, 0.74) 100%);
+  background: linear-gradient(155deg, var(--jf-card-a) 0%, var(--jf-card-b) 100%);
   border: 1px solid rgba(255, 255, 255, 0.075);
   backdrop-filter: blur(20px) saturate(135%);
   box-shadow:
@@ -121,13 +132,13 @@ button {
 }
 
 .jf-panel {
-  background: linear-gradient(160deg, rgba(30, 34, 40, 0.55), rgba(12, 14, 18, 0.62));
+  background: linear-gradient(160deg, var(--jf-panel-a), var(--jf-panel-b));
   border: 1px solid rgba(255, 255, 255, 0.075);
   backdrop-filter: blur(24px) saturate(140%);
 }
 
 .jf-glass {
-  background: linear-gradient(160deg, rgba(32, 35, 42, 0.55), rgba(10, 12, 16, 0.68));
+  background: linear-gradient(160deg, var(--jf-glass-a), var(--jf-glass-b));
   backdrop-filter: blur(28px) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.09);
 }
@@ -498,6 +509,46 @@ button {
 }
 
 /* ---- Startup intro ------------------------------------------------------ */
+
+/* The name step sits before the ident: a letterboxed stage with one question. */
+.jf-name-title {
+  font-size: clamp(52px, 8.6vw, 112px);
+  line-height: 0.88;
+  letter-spacing: -0.035em;
+  text-shadow: 0 18px 60px rgba(0, 0, 0, 0.75);
+}
+
+.jf-name-letterbox::before,
+.jf-name-letterbox::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: clamp(24px, 5vh, 64px);
+  background: #000;
+  pointer-events: none;
+}
+
+.jf-name-letterbox::before {
+  top: 0;
+}
+
+.jf-name-letterbox::after {
+  bottom: 0;
+}
+
+.jf-name-input {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  transition: border-color 200ms var(--jf-ease), background 200ms var(--jf-ease), box-shadow 200ms var(--jf-ease);
+}
+
+.jf-name-input:focus {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: color-mix(in srgb, var(--color-jf-red) 70%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-jf-red) 14%, transparent);
+}
+
 
 .jf-intro-glow {
   position: absolute;

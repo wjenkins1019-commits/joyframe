@@ -1,0 +1,57 @@
+# Packages the Windows installer and publishes it as a release asset, so the
+# download button on the repository always points at a build that passed the
+# icon check. Manual runs publish the current package version; a v* tag does
+# the same for that tag.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer
+        shell: bash
+        run: npm run dist > dist.log 2>&1
+
+      - name: Verify installer
+        run: npm run verify:installer
+
+      - name: Read package version
+        id: pkg
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JOYFRAME-Setup-${{ steps.pkg.outputs.version }}
+          path: release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}
+          name: JOYFRAME v${{ steps.pkg.outputs.version }}
+          files: release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: true

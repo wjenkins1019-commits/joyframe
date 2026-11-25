@@ -20,10 +20,16 @@ import { assertBuildFresh } from './build-fresh.mjs'
 const finishRun = reportUnfinishedRun('verify:intro-ui')
 const appLog = createAppLog('verify-intro-ui')
 import { openDatabase } from '../src/main/services/db.ts'
-import { getSettings } from '../src/main/services/settings.ts'
+import { getSettings, updateSettings } from '../src/main/services/settings.ts'
 
 const profile = path.resolve('.verify-intro/intro-ui-profile')
 fs.rmSync(profile, { recursive: true, force: true })
+// This probe is about the ident and its dropdown, so start past the name step.
+{
+  const db = openDatabase(path.join(profile, 'joyframe.db'))
+  updateSettings(db, { playerName: 'Probe' })
+  db.close()
+}
 const port = 9269
 
 let app: ReturnType<typeof spawn> | null = null

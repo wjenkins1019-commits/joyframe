@@ -69,10 +69,10 @@ export function GameDetail(): React.JSX.Element | null {
       displayMode: String(game.extra.displayMode ?? ''),
       saveStateMode: (game.extra.saveStateMode as ProfileState['saveStateMode']) ?? 'none',
       saveStateSlot: String(game.extra.saveStateSlot ?? ''),
-      launchRomDirectly: game.extra.launchRomDirectly !== false
+      launchRomDirectly: game.extra.launchRomDirectly ?? settings.launchRomsDirectly
     })
     setProfileSaved(false)
-  }, [game?.id, game?.updatedAt])
+  }, [game?.id, game?.updatedAt, settings.launchRomsDirectly])
 
   useEffect(() => {
     if (!artworkOpen || !game) return

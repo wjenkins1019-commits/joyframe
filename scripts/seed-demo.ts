@@ -12,12 +12,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { openDatabase } from '../src/main/services/db.ts'
 import { seedDemoLibrary } from '../src/main/services/demo.ts'
+import { updateSettings } from '../src/main/services/settings.ts'
 
 const root = path.resolve(process.argv[2] ?? '.demo')
 fs.rmSync(root, { recursive: true, force: true })
 fs.mkdirSync(path.join(root, 'artwork'), { recursive: true })
 
 const db = openDatabase(path.join(root, 'joyframe.db'))
+// QA profiles skip the first-run name step; the welcome flow has its own probes.
+updateSettings(db, { playerName: 'Demo Player' })
 const status = seedDemoLibrary(db, root, path.join(root, 'artwork'))
 db.close()
 

@@ -45,7 +45,7 @@ function ConsoleSearch({ onClose }: { onClose: () => void }): React.JSX.Element 
   }
 
   return (
-    <div ref={layerRef} data-jf-modal="1" className="fixed inset-0 z-[88] flex flex-col bg-[#0f1114]/98 animate-fade">
+    <div ref={layerRef} data-jf-modal="1" className="fixed inset-0 z-[88] flex flex-col bg-jf-bg/98 animate-fade">
       <div className="flex items-center gap-4 px-10 py-6">
         <Search className="h-6 w-6 text-jf-red" />
         <div className="flex-1 border-b-2 border-jf-red/60 pb-2 text-3xl font-bold tracking-wide text-white">
@@ -143,8 +143,8 @@ function ConsoleHero({ game }: { game: Game }): React.JSX.Element {
     <section className="relative overflow-hidden rounded-2xl border border-white/10">
       <div className="absolute inset-0">
         <Backdrop game={game} className="h-full w-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0f1114] via-[#0f1114]/80 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0f1114] via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-jf-bg via-jf-bg/80 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-jf-bg via-transparent to-transparent" />
       </div>
       <div className="relative flex min-h-[300px] flex-col justify-end px-10 pb-8 pt-16">
         <div className="max-w-2xl">
@@ -231,14 +231,15 @@ export function ConsoleMode(): React.JSX.Element {
     <div
       ref={focusRef}
       data-jf-console="1"
-      className="jf-console-enter fixed inset-0 z-40 flex flex-col overflow-y-auto bg-[#0a0c10]"
+      className="jf-console-enter fixed inset-0 z-40 flex flex-col overflow-y-auto overflow-x-clip bg-jf-bg"
     >
       <div className="pointer-events-none fixed inset-0 opacity-30">
         {hero && <Backdrop game={hero} className="h-full w-full scale-110 object-cover blur-2xl" />}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0f1114]/85 via-[#0f1114]/92 to-[#0f1114]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-jf-bg/85 via-jf-bg/92 to-jf-bg" />
       </div>
 
-      <header className="relative z-10 flex items-center gap-5 px-10 py-6">
+      <div className="relative z-10 flex w-full max-w-[1680px] flex-1 flex-col self-center">
+        <header className="flex items-center gap-5 px-6 py-6 xl:px-10">
         <div className="flex items-center gap-2.5">
           <Tv className="h-5 w-5 text-jf-red" />
           <span className="text-sm font-black tracking-[0.25em] text-white">JOYFRAME</span>
@@ -293,7 +294,7 @@ export function ConsoleMode(): React.JSX.Element {
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 space-y-7 px-10 pb-16">
+        <main className="flex w-full flex-1 flex-col gap-9 px-6 pb-16 xl:px-10">
         {hero && <ConsoleHero game={hero} />}
 
         {rows.map((row) => (
@@ -301,6 +302,7 @@ export function ConsoleMode(): React.JSX.Element {
             key={row.id}
             title={row.title}
             games={row.games}
+            columns={8}
             showProgress={row.key === 'continue' || row.key === 'recent'}
           />
         ))}
@@ -316,14 +318,15 @@ export function ConsoleMode(): React.JSX.Element {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5 text-[11px] text-white/30">
-          <span className={cx('flex items-center gap-2', controller.connected && 'text-emerald-300/70')}>
-            <Gamepad2 className="h-3.5 w-3.5" />
-            {controller.connected ? controller.name : 'No controller detected — keyboard arrows work too'}
-          </span>
-          <span>D-pad navigate · A select · B back · Y favorite · Start switches modes</span>
-        </div>
-      </main>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-5 text-[11px] text-white/30">
+            <span className={cx('flex items-center gap-2', controller.connected && 'text-emerald-300/70')}>
+              <Gamepad2 className="h-3.5 w-3.5" />
+              {controller.connected ? controller.name : 'No controller detected — keyboard arrows work too'}
+            </span>
+            <span>D-pad navigate · A select · B back · Y favorite · Start switches modes</span>
+          </div>
+        </main>
+      </div>
 
       {searchOpen && <ConsoleSearch onClose={() => setSearchOpen(false)} />}
 

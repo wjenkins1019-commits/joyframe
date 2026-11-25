@@ -39,6 +39,19 @@ const target = await findWindow(port)
 if (!target) throw new Error('no renderer target')
 const { call, close, evaluate } = await createSession(target)
 
+// Start past the first-run name step: this probe covers the ident itself.
+for (let attempt = 0; attempt < 40; attempt++) {
+  try {
+    const named = await evaluate(
+      `window.joyframe ? window.joyframe.settings.update({ playerName: 'Probe' }).then(() => true) : false`
+    )
+    if (named) break
+  } catch {
+    /* context still booting */
+  }
+  await delay(100)
+}
+
 // A reload briefly kills the context; polling treats that as "not yet".
 const phase = () =>
   evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
@@ -72,7 +85,7 @@ async function reloadWithIntro() {
 const results = []
 
 /** Every stage below runs on each pass, so a shorter list means one was skipped. */
-const EXPECTED_STAGES = 7
+const EXPECTED_STAGES = 8
 
 // 1. Auto-advance when the user does nothing.
 await reloadWithIntro()
@@ -163,6 +176,37 @@ await expectNoIntro('off')
 await evaluate(`window.joyframe.settings.update({ introMode: 'first-run' })`)
 await call('Page.reload')
 await expectNoIntro('first-run seen')
+
+// 7. An unnamed profile gets the cinematic name step before the ident, and
+// the name it types is stored and used on the ident itself.
+await evaluate(`window.joyframe.settings.update({ playerName: '', introMode: 'always' })`)
+await call('Page.reload')
+await delay(500)
+const namePhase = await waitForIntro()
+const nameText = await evaluate(`document.querySelector('[data-jf-intro="name"]')?.innerText ?? ''`)
+console.log('name step phase:', namePhase, 'copy:', JSON.stringify(nameText.slice(0, 80)))
+if (namePhase !== 'name') throw new Error(`expected the name step, saw ${JSON.stringify(namePhase)}`)
+if (!/time for your/i.test(nameText) || !/game face/i.test(nameText)) {
+  throw new Error('the name step did not show the game-face line')
+}
+await evaluate(`document.querySelector('input[aria-label="Your name"]')?.focus()`)
+await call('Input.insertText', { text: 'Buffy' })
+const typed = await evaluate(`document.querySelector('input[aria-label="Your name"]')?.value ?? ''`)
+if (typed !== 'Buffy') throw new Error(`name field received ${JSON.stringify(typed)}, expected Buffy`)
+await evaluate(`document.querySelector('[data-jf-intro="name"] button[type="submit"]')?.click()`)
+let playPhase = null
+for (let attempt = 0; attempt < 60 && playPhase !== 'play'; attempt++) {
+  playPhase = await phase()
+  if (playPhase !== 'play') await delay(60)
+}
+const storedName = await evaluate(`window.joyframe.settings.get().then((s) => s.playerName)`)
+const identText = await evaluate(`document.querySelector('[data-jf-intro="play"]')?.innerText ?? ''`)
+console.log('name step entered:', JSON.stringify(storedName), 'ident phase:', playPhase)
+if (playPhase !== 'play') throw new Error('submitting the name did not start the ident')
+if (storedName !== 'Buffy') throw new Error(`stored player name ${JSON.stringify(storedName)}, expected Buffy`)
+if (!/GAME FACE ON,\s*BUFFY/i.test(identText)) throw new Error('the ident did not use the stored name')
+if ((await waitForGone(7000)) === null) throw new Error('the ident did not finish after the name step')
+results.push('name')
 
 close()
 try { execFileSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}

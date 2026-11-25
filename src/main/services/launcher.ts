@@ -71,7 +71,8 @@ function resolveEmulator(
   game: Game,
   emulatorId: string | null,
   coreOverride: string,
-  templateOverride: string
+  templateOverride: string,
+  settings: AppSettings | undefined
 ): { exe: string; args: string[]; cwd: string } {
   if (!emulatorId) throw new Error('No emulator is configured for this game. Assign one in the game settings.')
   const row = db.prepare('SELECT * FROM emulators WHERE id = ?').get(emulatorId) as Record<string, unknown> | undefined
@@ -100,7 +101,10 @@ function resolveEmulator(
     .replace(/\{title\}/g, game.title)
 
   const args = splitArgs(expanded)
-  if (!passesRom && game.extra.launchRomDirectly !== false) args.push(game.romPath)
+  // A per-game choice wins; otherwise the global Emulation setting decides
+  // whether a template without {rom} still opens the game or a bare emulator.
+  const launchDirectly = game.extra.launchRomDirectly ?? settings?.launchRomsDirectly ?? true
+  if (!passesRom && launchDirectly) args.push(game.romPath)
 
   return {
     exe: emulator.path,
@@ -109,7 +113,7 @@ function resolveEmulator(
   }
 }
 
-export function buildLaunchCommand(db: Db, game: Game): ResolvedLaunch {
+export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): ResolvedLaunch {
   const defaultMethod = game.launchMethods.find((m) => m.isDefault)
 
   if (defaultMethod) {
@@ -141,7 +145,8 @@ export function buildLaunchCommand(db: Db, game: Game): ResolvedLaunch {
         game,
         defaultMethod.emulatorId ?? game.emulatorId,
         defaultMethod.core,
-        defaultMethod.args
+        defaultMethod.args,
+        settings
       )
       return { kind: 'spawn', target: run.exe, args: run.args, cwd: run.cwd, source: 'emulator', watchDir: '', description: 'Emulator' }
     }
@@ -172,7 +177,7 @@ export function buildLaunchCommand(db: Db, game: Game): ResolvedLaunch {
   }
 
   if (game.emulatorId || game.romPath) {
-    const run = resolveEmulator(db, game, game.emulatorId, game.emulatorCore, game.launchArgs)
+    const run = resolveEmulator(db, game, game.emulatorId, game.emulatorCore, game.launchArgs, settings)
     return { kind: 'spawn', target: run.exe, args: run.args, cwd: run.cwd, source: 'emulator', watchDir: '', description: 'Emulator' }
   }
 
@@ -264,7 +269,7 @@ export class Launcher {
 
     let resolved: ResolvedLaunch
     try {
-      resolved = buildLaunchCommand(this.db, game)
+      resolved = buildLaunchCommand(this.db, game, this.hooks.settings())
     } catch (error) {
       throw new Error((error as Error).message)
     }

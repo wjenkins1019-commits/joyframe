@@ -9,13 +9,16 @@ export function GameRow({
   games,
   showProgress = false,
   onSeeAll,
-  className
+  className,
+  columns
 }: {
   title: string
   games: Game[]
   showProgress?: boolean
   onSeeAll?: () => void
   className?: string
+  /** Fit exactly this many cards to the row width; keeps the shelf edge clean. */
+  columns?: number
 }): React.JSX.Element | null {
   const scroller = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState(false)
@@ -51,12 +54,21 @@ export function GameRow({
       <div className="relative">
         <div
           ref={scroller}
-          className="scrollbar-none flex gap-3.5 overflow-x-auto pb-1 pr-1"
+          className={cx('scrollbar-none flex gap-3.5 overflow-x-auto pb-1', columns ? 'pr-0' : 'pr-1')}
           style={{ scrollSnapType: 'x proximity' }}
         >
           {games.map((game) => (
-            <div key={game.id} style={{ scrollSnapAlign: 'start' }}>
-              <GameCard game={game} showProgress={showProgress} />
+            <div
+              key={game.id}
+              className={cx(Boolean(columns) && 'min-w-0 shrink-0')}
+              style={{
+                scrollSnapAlign: 'start',
+                ...(columns
+                  ? { flex: `0 0 calc((100% - ${(columns - 1) * 14}px) / ${columns})` }
+                  : undefined)
+              }}
+            >
+              <GameCard game={game} showProgress={showProgress} fluid={Boolean(columns)} />
             </div>
           ))}
         </div>

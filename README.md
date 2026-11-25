@@ -10,6 +10,23 @@ Built as an Electron + React + TypeScript application with a local SQLite databa
 
 ---
 
+## Download and install (Windows)
+
+**[Download the latest JOYFRAME installer](https://github.com/wjenkins1019-commits/joyframe/releases/latest)** — look for
+`JOYFRAME Setup 1.0.0.exe` under **Assets**.
+
+1. Download the `.exe` and run it.
+2. Choose an install folder (the default is fine) and finish the wizard.
+3. Launch **JOYFRAME** from the Start menu or the desktop shortcut.
+
+Windows 10/11 (x64). No account and no internet connection are needed to open the app; an internet connection is only
+used for metadata, trailers and remote artwork.
+
+The installer is unsigned, so Windows SmartScreen may warn on first run. Choose **More info → Run anyway** if you trust
+the download. JOYFRAME does not bundle games, ROMs, BIOS files or emulators — point it at the games you already own.
+
+---
+
 ## Quick start
 
 Requires **Node 26**: the services import `node:sqlite` and the probes use the built-in `WebSocket`, both of
@@ -102,7 +119,7 @@ npm run smoke
   and save-state folder.
 - RetroArch core mapping per platform, `{rom}` / `{core}` / `{game}` / `{dir}` / `{stateSlot}` placeholders. When a game's
   arguments never mention `{rom}` the ROM is appended anyway, so the emulator opens the game rather than an empty window;
-  each game can switch that off with “Launch the ROM directly”.
+  each game can switch that off with “Launch the ROM directly”, and Settings → Emulation sets the default for every game.
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
   BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
 - One file per game: when a title exists in several formats in the same folder only the preferred one imports.
@@ -280,7 +297,8 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
   import always works and is cached locally.
 - **Platform support** depends on emulator availability and the user's firmware; Switch/PS3/PS2/etc. are not shipped
   with anything.
-- **Themes** offer a dark UI with accent colours (no light theme), by design.
+- **Themes** offer five built-in dark palettes (Crimson, Midnight, Violet, Forest, Mono) plus a custom accent colour;
+  there is no light theme, by design.
 - Controller support uses the browser Gamepad API; unusual DirectInput-only pads may appear as generic devices.
 
 ---

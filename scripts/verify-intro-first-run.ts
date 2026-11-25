@@ -22,7 +22,7 @@ import { getMeta, updateSettings } from '../src/main/services/settings.ts'
 const profile = path.resolve('.verify-intro/first-run-profile')
 fs.rmSync(profile, { recursive: true, force: true })
 const db = openDatabase(path.join(profile, 'joyframe.db'))
-updateSettings(db, { introMode: 'first-run' })
+updateSettings(db, { introMode: 'first-run', playerName: 'Probe' })
 db.close()
 
 const port = 9267

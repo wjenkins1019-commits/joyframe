@@ -48,6 +48,12 @@ const target = await findWindow(port)
 if (!target) throw new Error('installed app did not expose a renderer')
 const { call, close, evaluate } = await createSession(target)
 
+// The installed copy starts with an unnamed profile on a fresh directory; name
+// it and reload so this probe exercises the ident rather than the name step.
+await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
+await call('Page.reload')
+await delay(900)
+
 const phase = () =>
   evaluate(`document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`).catch(() => null)
 let seen = null

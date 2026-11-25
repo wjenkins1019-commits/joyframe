@@ -24,6 +24,7 @@ import type { BackupInfo, DemoStatus, HomeSection, PublicSettings, SettingsPatch
 import { defaultRomOrder } from '@shared/rom-formats'
 import { api, errorMessage } from '../../lib/api'
 import { describeRefresh } from '../../lib/refresh-summary'
+import { THEMES } from '../../lib/themes'
 import { useStore } from '../../state/store'
 import {
   Badge,
@@ -224,7 +225,38 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="Appearance" description="Dark mode is the default JOYFRAME look." icon={<Sparkles className="h-4 w-4" />}>
+        <Section title="Appearance" description="Choose a palette, accent colour and the name used across the app." icon={<Sparkles className="h-4 w-4" />}>
+          <div className="mb-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-jf-muted">Theme</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {THEMES.map((theme) => (
+                <button
+                  key={theme.id}
+                  data-nav="1"
+                  onClick={() => commit({ theme: theme.id, themeAccent: theme.accent })}
+                  aria-pressed={draft.theme === theme.id}
+                  className={cx(
+                    'rounded-xl border p-2.5 text-left transition',
+                    draft.theme === theme.id
+                      ? 'border-white/55 bg-white/10 shadow-[0_0_0_3px_rgba(255,255,255,0.06)]'
+                      : 'border-white/10 bg-black/20 hover:border-white/30'
+                  )}
+                >
+                  <span className="flex gap-1.5">
+                    {[theme.bg, theme.panel, theme.card, theme.accent].map((color) => (
+                      <span
+                        key={color}
+                        className="h-3.5 w-3.5 rounded-full border border-white/15"
+                        style={{ background: color }}
+                      />
+                    ))}
+                  </span>
+                  <span className="mt-2 block text-xs font-semibold text-white/85">{theme.name}</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-white/40">{theme.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="mb-4">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-jf-muted">Accent colour</p>
             <div className="flex items-center gap-2">
@@ -251,6 +283,18 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               <span className="ml-auto font-mono text-[11px] text-white/40">{draft.themeAccent}</span>
             </div>
           </div>
+          <Field label="Player name" hint="Shown in the welcome intro and used to personalize the console.">
+            <Input
+              value={draft.playerName}
+              maxLength={24}
+              onChange={(event) => setDraft({ ...draft, playerName: event.target.value })}
+              onBlur={() => commitText('playerName')}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+              }}
+              placeholder="Your name"
+            />
+          </Field>
           <Toggle
             label="Reduce motion"
             description="Disable transitions and hover animations for a calmer, faster interface."
@@ -366,6 +410,18 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               Enter Console Mode now
             </Button>
           </div>
+        </Section>
+
+        <Section title="Emulation" description="Choose how a ROM launch hands the game to your emulator." icon={<Gamepad2 className="h-4 w-4" />}>
+          <Toggle
+            label="Open the ROM directly in the emulator"
+            description="On: the selected ROM is passed to the emulator even when its arguments never mention {rom}. Off: the emulator opens on its own and you pick the game inside it. Each game can override this in its own settings."
+            checked={draft.launchRomsDirectly}
+            onChange={(value) => commit({ launchRomsDirectly: value })}
+          />
+          <p className="mt-3 text-[10px] leading-relaxed text-white/30">
+            This is the default for every ROM game. A per-game switch on the game page always wins.
+          </p>
         </Section>
 
         <ControllerDiagnostics />

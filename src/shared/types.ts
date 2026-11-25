@@ -31,6 +31,9 @@ export type GameSource = 'manual' | 'pc-scan' | 'rom-scan' | 'steam' | 'emulator
 
 export type CompletionStatus = 'unplayed' | 'in-progress' | 'completed' | 'abandoned'
 
+/** Built-in UI palettes. Accent colour remains separately editable. */
+export type ThemeId = 'crimson' | 'midnight' | 'violet' | 'forest' | 'mono'
+
 export interface Screenshot {
   thumb?: string
   full: string
@@ -188,7 +191,12 @@ export interface PlaySession {
 }
 
 export interface AppSettings {
+  theme: ThemeId
   themeAccent: string
+  /** Shown in the welcome intro and used to personalize the app. */
+  playerName: string
+  /** Global default for handing a ROM to the emulator; per-game extras override it. */
+  launchRomsDirectly: boolean
   consoleModeOnStartup: boolean
   /** Whether the animated startup ident plays every launch, once, or never. */
   introMode: 'always' | 'first-run' | 'off'
@@ -232,7 +240,10 @@ export type SettingsPatch = Partial<Omit<AppSettings, 'rawgApiKey' | 'igdbClient
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'crimson',
   themeAccent: '#D71935',
+  playerName: '',
+  launchRomsDirectly: true,
   consoleModeOnStartup: false,
   introMode: 'always',
   autoPreviews: true,
