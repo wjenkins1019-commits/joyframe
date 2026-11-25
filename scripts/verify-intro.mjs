@@ -190,7 +190,19 @@ if (!/time for your/i.test(nameText) || !/game face/i.test(nameText)) {
   throw new Error('the name step did not show the game-face line')
 }
 await evaluate(`document.querySelector('input[aria-label="Your name"]')?.focus()`)
-await call('Input.insertText', { text: 'Buffy' })
+// Real key events, not Input.insertText: the intro gate sits in front of the
+// field and must let a text field keep its keystrokes.
+for (const char of 'Buffy') {
+  const code = `Key${char.toUpperCase()}`
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    text: char,
+    key: char,
+    code,
+    windowsVirtualKeyCode: char.toUpperCase().charCodeAt(0)
+  })
+  await call('Input.dispatchKeyEvent', { type: 'keyUp', key: char, code })
+}
 const typed = await evaluate(`document.querySelector('input[aria-label="Your name"]')?.value ?? ''`)
 if (typed !== 'Buffy') throw new Error(`name field received ${JSON.stringify(typed)}, expected Buffy`)
 await evaluate(`document.querySelector('[data-jf-intro="name"] button[type="submit"]')?.click()`)

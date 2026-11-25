@@ -428,14 +428,16 @@ export function useSpatialNavigation(): void {
     let padWasIdle = true
 
     const handleKeyDown = (event: KeyboardEvent): void => {
-      // The startup intro takes the first key press and does nothing else with
-      // it, so skipping never also activates whatever is focused behind it.
-      if (introPlaying()) {
-        skipIntro()
-        return
-      }
       const target = event.target as HTMLElement | null
       const typing = isTextField(target)
+      // The startup intro takes the first key press and does nothing else with
+      // it, so skipping never also activates whatever is focused behind it.
+      // A text field inside the intro (the name step) is the exception: those
+      // keys belong to the field, or the name could never be typed.
+      if (introPlaying()) {
+        if (!typing) skipIntro()
+        return
+      }
       // A focused dropdown owns its keys like a text field does: arrows change
       // the selection and Enter commits it. Without this the spatial-nav
       // handler swallowed every arrow, so selects could not be used by touch
