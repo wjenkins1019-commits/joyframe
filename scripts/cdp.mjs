@@ -15,7 +15,7 @@ export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export const REAL_CLOCK = { now: () => Date.now(), sleep: (ms) => delay(ms) }
 
 /**
- * Poll `evaluate(expression)` until it returns something truthy.
+ * Poll `evaluate(expression)` until `ready` accepts the value.
  *
  * The first launch after an install can spend several seconds before the page
  * paints, so a fixed sleep reads a window that is not there yet and reports a
@@ -26,21 +26,30 @@ export const REAL_CLOCK = { now: () => Date.now(), sleep: (ms) => delay(ms) }
  * "not yet" as well. Time is read from `clock`, which lets a test prove a
  * ten-second wait without spending ten seconds.
  *
- * Returns null when the budget runs out, so the caller names what never
- * appeared instead of hanging.
+ * The last value read is returned at the deadline, so the caller can name what
+ * never appeared instead of hanging. Probes that must not mistake silence for
+ * an empty page pass `throwOnExpire`, which rethrows the read error instead.
  */
-export async function waitForValue(evaluate, expression, { timeout, interval = 100, clock = REAL_CLOCK }) {
+export async function waitForValue(
+  evaluate,
+  expression,
+  { timeout, interval = 100, clock = REAL_CLOCK, ready = Boolean, throwOnExpire = false }
+) {
   const deadline = clock.now() + timeout
+  let value = null
+  let error = null
   while (clock.now() < deadline) {
     try {
-      const value = await evaluate(expression)
-      if (value) return value
-    } catch {
-      /* the reload replaced the execution context; ask again */
+      value = await evaluate(expression)
+      error = null
+    } catch (thrown) {
+      error = thrown
     }
+    if (value && ready(value)) return value
     await clock.sleep(interval)
   }
-  return null
+  if (!value && error && throwOnExpire) throw error
+  return value
 }
 
 /** How long one DevTools command may go unanswered before the probe gives up. */
@@ -483,23 +492,8 @@ export async function createSession(target, { reload = true } = {}) {
    * throw briefly; the error is kept and rethrown when nothing ever renders, so
    * a broken probe fails instead of timing out silently.
    */
-  const read = async (expression, ready, timeout = 20000) => {
-    const deadline = Date.now() + timeout
-    let value = null
-    let error = null
-    while (Date.now() < deadline) {
-      try {
-        value = await evaluate(expression)
-        error = null
-      } catch (thrown) {
-        error = thrown
-      }
-      if (value && ready(value)) return value
-      await delay(150)
-    }
-    if (!value && error) throw error
-    return value
-  }
+  const read = (expression, ready, timeout = 20000) =>
+    waitForValue(evaluate, expression, { timeout, interval: 150, ready, throwOnExpire: true })
 
   return { call, close, events, evaluate, read }
 }

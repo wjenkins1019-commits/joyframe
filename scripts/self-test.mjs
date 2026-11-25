@@ -130,6 +130,12 @@ const CASES = [
     stdout: ['missing bridge: value=null waited=30000ms']
   },
   {
+    mode: 'read-gives-up',
+    name: 'a read that only ever throws surfaces the error at the deadline',
+    exit: 0,
+    stdout: ['read failed: no renderer yet waited=20000ms']
+  },
+  {
     mode: 'missing-prereq',
     name: 'a missing prerequisite exits 2 with the file and its remedy',
     exit: 2,

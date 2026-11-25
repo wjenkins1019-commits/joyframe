@@ -8,11 +8,20 @@ export interface Clock {
 
 export declare const REAL_CLOCK: Clock
 
-/** Polls `evaluate(expression)` until it is truthy, or returns null at the deadline. */
+/**
+ * Polls `evaluate(expression)` until `ready` accepts the value. Returns the last
+ * value read at the deadline, or rethrows the read error with `throwOnExpire`.
+ */
 export declare function waitForValue(
   evaluate: (expression: string) => Promise<any>,
   expression: string,
-  options: { timeout: number; interval?: number; clock?: Clock }
+  options: {
+    timeout: number
+    interval?: number
+    clock?: Clock
+    ready?: (value: any) => boolean
+    throwOnExpire?: boolean
+  }
 ): Promise<any>
 
 export interface CdpSession {

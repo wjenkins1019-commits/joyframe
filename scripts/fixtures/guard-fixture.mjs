@@ -148,6 +148,26 @@ if (mode === 'never-bridge') {
   process.exit(value === null ? 0 : 1)
 }
 
+if (mode === 'read-gives-up') {
+  // createSession's read contract: when every attempt throws, the deadline
+  // surfaces the error instead of reporting an empty page as a rendered one.
+  const { clock, elapsed } = virtualClock()
+  let thrown = null
+  try {
+    await waitForValue(
+      async () => {
+        throw new Error('no renderer yet')
+      },
+      'document.readyState',
+      { timeout: 20000, clock, throwOnExpire: true }
+    )
+  } catch (error) {
+    thrown = error
+  }
+  console.log(`read failed: ${thrown?.message ?? 'none'} waited=${elapsed()}ms`)
+  process.exit(thrown?.message === 'no renderer yet' ? 0 : 1)
+}
+
 if (mode === 'busy-port') {
   // Hold the port from this process so preflight sees something accepting.
   const server = net.createServer()
