@@ -89,7 +89,20 @@ jobs:
       # Builds out/ itself, seeds a throwaway profile, then drives the real
       # renderer with a fake standard-mapping pad and real DevTools input.
       - name: Controller suite
+        id: controller
         run: npm run verify:pad
+
+      # The suite's screenshots and the app's own output are the evidence a red
+      # run needs; without them the only way to see either is to run it again.
+      - name: Upload controller screenshots and app log
+        if: failure() && steps.controller.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-suite-dev-artifacts
+          path: |
+            .verify-shots
+            .verify-logs/verify-pad.log
+          if-no-files-found: warn
 
   # `npm run dist` is the only step that proves the tracked brand assets reach a
   # real package, and nothing in CI ran it — so a clean checkout could package
@@ -129,4 +142,15 @@ jobs:
       # release/win-unpacked/JOYFRAME.exe with the virtual pad, and refuses to
       # run unless the asar matches the current out/.
       - name: Controller suite against the packaged build
+        id: packaged-controller
         run: npm run verify:dist-pad
+
+      - name: Upload packaged controller screenshots and app log
+        if: failure() && steps.packaged-controller.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-suite-packaged-artifacts
+          path: |
+            .verify-shots
+            .verify-logs/verify-dist-pad.log
+          if-no-files-found: warn
