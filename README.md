@@ -255,8 +255,8 @@ the only check that looks at the installed payload rather than `release/win-unpa
 `npm run verify:installed-build`, which compares the SHA-256 of the installed `resources/app.asar` with the one in
 `release/win-unpacked` and fails on any difference — a stale or partial install that the packaged checks cannot see.
 Every run prints `spawn->window`, `window->bridge` and `bridge->intro` milliseconds, so a slow cold start shows up as
-numbers instead of a vague timeout, and window discovery shares the same 30 s boot deadline as the gates after it — a
-launch that misses the deadline is reported as slower than it, not as a renderer that never appeared. Set
+numbers instead of a vague timeout, and every gate spends one 30 s budget measured from launch rather than restarting
+it — a launch that misses the deadline is reported as slower than it, not as a renderer that never appeared. Set
 `JOYFRAME_BOOT_TIMEOUT_MS` lower to exercise that deadline without waiting; it only tightens the 30 s default.
 `npm run check:installed` runs `npm run check` and then `verify:installed-build` in one go, and is the final step
 after a release: rebuild, install, then that command, so the shipped copy is proven to be the verified build and not

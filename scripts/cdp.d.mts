@@ -32,7 +32,7 @@ export interface CdpSession {
 
 export declare function findWindow(
   port: number,
-  options?: { timeout?: number; interval?: number }
+  options?: { timeout?: number; interval?: number; clock?: Clock }
 ): Promise<{ webSocketDebuggerUrl: string } | null>
 
 /** Exit code for a run the machine was not ready for, not a regression. */

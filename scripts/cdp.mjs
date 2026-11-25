@@ -463,11 +463,14 @@ export async function connect(debuggerUrl) {
  * the rest of the boot to, so discovery runs out with the boot budget and the
  * caller can say the launch was slow. Sleeps are clipped to the remaining time,
  * so the deadline is real to within one poll rather than one whole interval.
+ *
+ * Time is read from `clock` like waitForValue, so a test can pin the expiry
+ * without spending the budget.
  */
-export async function findWindow(port, { timeout = 20000, interval = 250 } = {}) {
-  const deadline = Date.now() + timeout
+export async function findWindow(port, { timeout = 20000, interval = 250, clock = REAL_CLOCK } = {}) {
+  const deadline = clock.now() + timeout
   do {
-    await delay(Math.max(0, Math.min(interval, deadline - Date.now())))
+    await clock.sleep(Math.max(0, Math.min(interval, deadline - clock.now())))
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
       const target = list.find((entry) => entry.type === 'page' && entry.url.includes('index.html'))
@@ -475,7 +478,7 @@ export async function findWindow(port, { timeout = 20000, interval = 250 } = {})
     } catch {
       /* still starting */
     }
-  } while (Date.now() < deadline)
+  } while (clock.now() < deadline)
   return null
 }
 

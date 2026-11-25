@@ -52,12 +52,14 @@ await preflight({
 })
 
 /**
- * How long a cold first launch may take to reach a painted state. Window
- * discovery and every later gate read this one number, so a launch slower than
- * the deadline reports a slow boot instead of a missing renderer. Lowering it
- * through the environment only tightens the real deadline — it never loosens
- * the 30 s default — and exists so the expiry path can be proven against the
- * installed app without waiting a full minute for a failure.
+ * How long a cold first launch may take to reach a painted state, measured once
+ * from launch. Discovery and every later gate draw from this same budget, so a
+ * launch that hangs fails BOOT_TIMEOUT_MS after spawn instead of restarting the
+ * clock at each stage — a boot that misses the deadline reports a slow boot
+ * instead of a missing renderer. Lowering it through the environment only
+ * tightens the real deadline — it never loosens the 30 s default — and exists so
+ * the expiry path can be proven against the installed app without waiting a
+ * full minute for a failure.
  */
 const BOOT_TIMEOUT_MS = (() => {
   const raw = process.env.JOYFRAME_BOOT_TIMEOUT_MS
@@ -78,6 +80,13 @@ const app = spawn(exe, [
   '--no-sandbox'
 ], { stdio: appLog.stdio })
 
+/** The one cold-boot deadline: every gate below spends what is left of it. */
+const deadline = spawnedAt + BOOT_TIMEOUT_MS
+const remaining = () => deadline - Date.now()
+const bootDeadlineError = (stage) =>
+  new Error(`installed app ${stage} within ${BOOT_TIMEOUT_MS} ms of launch — the boot is slower than the deadline`)
+console.log(`installed boot: deadline ${BOOT_TIMEOUT_MS} ms from launch`)
+
 const INTRO_PHASE = `document.querySelector('[data-jf-intro]')?.getAttribute('data-jf-intro') ?? null`
 
 // Readings taken inside the try and asserted after teardown, so a failed check
@@ -90,14 +99,10 @@ let detailOpened = null
 let appVisible = null
 
 try {
-  // Discovery shares the boot deadline, so a slow launch is named as slow
-  // rather than as a build that never produced a window.
-  const target = await findWindow(port, { timeout: BOOT_TIMEOUT_MS })
-  if (!target) {
-    throw new Error(
-      `installed app exposed no renderer within ${BOOT_TIMEOUT_MS} ms of launch — the boot is slower than the deadline`
-    )
-  }
+  // Discovery spends what is left of the boot deadline, so a slow launch is
+  // named as slow rather than as a build that never produced a window.
+  const target = await findWindow(port, { timeout: Math.max(0, remaining()) })
+  if (!target) throw bootDeadlineError('exposed no renderer')
   const windowAt = Date.now()
   console.log(`installed boot: spawn->window ${windowAt - spawnedAt} ms`)
 
@@ -105,14 +110,24 @@ try {
   const { call, evaluate } = session
   const phase = () => evaluate(INTRO_PHASE).catch(() => null)
 
+  /**
+   * Wait for something the boot must eventually show, spending only what is left
+   * of the launch deadline. A gate that never gets its value therefore ends the
+   * run at BOOT_TIMEOUT_MS from spawn, and names itself as the stage that
+   * missed a deadline that the whole boot shares.
+   */
+  const waitForBoot = async (expression, stage) => {
+    const left = remaining()
+    if (left <= 0) throw bootDeadlineError(stage)
+    const value = await waitForValue(evaluate, expression, { timeout: left })
+    if (!value) throw bootDeadlineError(stage)
+    return value
+  }
+
   // Wait out the cold start before touching settings: a reload issued while the
   // window is still booting can be dropped, which would leave the intro to run
   // for the unnamed profile instead of the ident this probe checks.
-  if (!(await waitForValue(evaluate, `Boolean(window.joyframe?.settings)`, { timeout: BOOT_TIMEOUT_MS }))) {
-    throw new Error(
-      `installed app exposed no settings bridge within ${BOOT_TIMEOUT_MS} ms of its window — the boot is slower than the deadline`
-    )
-  }
+  await waitForBoot(`Boolean(window.joyframe?.settings)`, 'exposed no settings bridge')
   // Includes attaching and the session's own reload, so it reads as the probe's
   // setup plus the app's first paint, not as app time alone.
   const bridgeAt = Date.now()
@@ -123,14 +138,10 @@ try {
   await evaluate(`window.joyframe.settings.update({ playerName: 'Probe' })`)
   await call('Page.reload')
 
-  seen = await waitForValue(evaluate, INTRO_PHASE, { timeout: BOOT_TIMEOUT_MS })
-  if (seen === null) {
-    throw new Error(
-      `installed app showed no intro within ${BOOT_TIMEOUT_MS} ms of the reload — the boot is slower than the deadline`
-    )
-  }
+  seen = await waitForBoot(INTRO_PHASE, 'showed no intro')
   const introAt = Date.now()
   console.log(`installed boot: bridge->intro ${introAt - bridgeAt} ms (after the probe's settings reload)`)
+  console.log(`installed boot: total ${introAt - spawnedAt} ms of ${BOOT_TIMEOUT_MS} ms budget`)
   const captured = await call('Page.captureScreenshot', { format: 'png' })
   if (captured.result?.data) fs.writeFileSync(shot, Buffer.from(captured.result.data, 'base64'))
   const text = await evaluate(`document.querySelector('[data-jf-intro]')?.innerText ?? null`).catch(() => null)
@@ -156,11 +167,7 @@ try {
   await call('Page.reload')
   // "No intro" only proves something once the shell has painted: an empty
   // document on a slow boot would otherwise pass for a build honouring "off".
-  const offPainted = await waitForValue(
-    evaluate,
-    `Boolean(document.querySelector('[data-jf-view]'))`,
-    { timeout: BOOT_TIMEOUT_MS }
-  )
+  await waitForBoot(`Boolean(document.querySelector('[data-jf-view]'))`, 'showed no app shell with intro off')
   let offPlayed = false
   const offDeadline = Date.now() + 2600
   while (Date.now() < offDeadline) {
@@ -173,7 +180,6 @@ try {
   const offApp = await evaluate(`Boolean(document.querySelector('[data-jf-view]'))`)
   console.log('installed introMode:', JSON.stringify(mode), 'off mode played:', offPlayed, 'app visible:', offApp)
   if (mode !== 'always') throw new Error(`unexpected installed introMode ${JSON.stringify(mode)}`)
-  if (!offPainted) throw new Error('installed app shell never painted with intro off')
   if (offPlayed) throw new Error('installed build ignored introMode off')
   if (!offApp) throw new Error('installed app missing with intro off')
 } finally {

@@ -13,10 +13,11 @@
  *   node scripts/fixtures/guard-fixture.mjs <mode> [workdir]
  */
 import fs from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
+import { findWindow, preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
 import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
@@ -166,6 +167,54 @@ if (mode === 'read-gives-up') {
   }
   console.log(`read failed: ${thrown?.message ?? 'none'} waited=${elapsed()}ms`)
   process.exit(thrown?.message === 'no renderer yet' ? 0 : 1)
+}
+
+/** A loopback port nothing listens on, so discovery's polls all fail. */
+async function closedPort() {
+  const server = net.createServer()
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  await new Promise((resolve) => server.close(resolve))
+  return port
+}
+
+if (mode === 'window-expires') {
+  // No window ever appears: discovery must return null exactly at the deadline,
+  // which is what lets the probe report a slow boot instead of a missing one.
+  const port = await closedPort()
+  const { clock, elapsed } = virtualClock()
+  const target = await findWindow(port, { timeout: 30000, clock })
+  console.log(`window: target=${target === null ? 'none' : 'found'} waited=${elapsed()}ms`)
+  process.exit(target === null && elapsed() === 30000 ? 0 : 1)
+}
+
+if (mode === 'window-clips-last-poll') {
+  // A budget that is not a whole number of intervals must end at the budget, not
+  // at the next interval past it.
+  const port = await closedPort()
+  const { clock, elapsed } = virtualClock()
+  const target = await findWindow(port, { timeout: 600, clock })
+  console.log(`clipped window: target=${target === null ? 'none' : 'found'} waited=${elapsed()}ms`)
+  process.exit(target === null && elapsed() === 600 ? 0 : 1)
+}
+
+if (mode === 'window-found') {
+  // A listed window is returned on the first poll, and discovery stops there
+  // instead of spending the rest of the budget.
+  const server = http.createServer((request, response) => {
+    response.setHeader('content-type', 'application/json')
+    response.end(
+      JSON.stringify([
+        { type: 'page', url: 'file:///app/out/renderer/index.html', webSocketDebuggerUrl: 'ws://127.0.0.1/fixture' }
+      ])
+    )
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { clock, elapsed } = virtualClock()
+  const target = await findWindow(server.address().port, { timeout: 30000, clock })
+  await new Promise((resolve) => server.close(resolve))
+  console.log(`window found=${target !== null} waited=${elapsed()}ms`)
+  process.exit(target?.webSocketDebuggerUrl === 'ws://127.0.0.1/fixture' && elapsed() === 250 ? 0 : 1)
 }
 
 if (mode === 'busy-port') {

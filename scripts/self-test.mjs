@@ -136,6 +136,26 @@ const CASES = [
     stdout: ['read failed: no renderer yet waited=20000ms']
   },
   {
+    // Window discovery is the first gate of a cold boot, so its budget must end
+    // where it says it does — not twenty seconds early, not a poll late.
+    mode: 'window-expires',
+    name: 'window discovery ends at its deadline on the virtual clock',
+    exit: 0,
+    stdout: ['window: target=none waited=30000ms']
+  },
+  {
+    mode: 'window-clips-last-poll',
+    name: 'discovery clips its last sleep to the deadline instead of the next interval',
+    exit: 0,
+    stdout: ['clipped window: target=none waited=600ms']
+  },
+  {
+    mode: 'window-found',
+    name: 'discovery returns a listed window and stops polling',
+    exit: 0,
+    stdout: ['window found=true waited=250ms']
+  },
+  {
     mode: 'missing-prereq',
     name: 'a missing prerequisite exits 2 with the file and its remedy',
     exit: 2,
