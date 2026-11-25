@@ -133,10 +133,21 @@ jobs:
       # The log is the only place electron-builder admits it substituted the
       # fallback icon, so keep its exit status through the pipe and save it.
       - name: Build the Windows installer
+        id: build
         shell: bash
         run: |
           set -o pipefail
           npm run dist 2>&1 | tee dist.log
+
+      # A failed build leaves its only diagnostic in dist.log; attach it so the
+      # failure can be read without rebuilding.
+      - name: Upload installer build log
+        if: failure() && steps.build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-build-log
+          path: dist.log
+          if-no-files-found: warn
 
       - name: Prove the installer used the project icon
         run: npm run verify:installer
