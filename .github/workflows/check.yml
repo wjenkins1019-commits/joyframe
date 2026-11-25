@@ -98,7 +98,7 @@ jobs:
         if: failure() && steps.controller.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: controller-suite-dev-artifacts
+          name: controller-suite-dev-artifacts-attempt-${{ github.run_attempt }}
           path: |
             .verify-shots
             .verify-logs/verify-pad.log
@@ -145,7 +145,7 @@ jobs:
         if: failure() && steps.build.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: installer-build-log
+          name: installer-build-log-attempt-${{ github.run_attempt }}
           path: dist.log
           if-no-files-found: warn
 
@@ -163,7 +163,7 @@ jobs:
         if: failure() && steps.packaged-controller.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: controller-suite-packaged-artifacts
+          name: controller-suite-packaged-artifacts-attempt-${{ github.run_attempt }}
           path: |
             .verify-shots
             .verify-logs/verify-dist-pad.log
