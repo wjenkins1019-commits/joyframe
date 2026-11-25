@@ -62,6 +62,15 @@ const PROFILE_CHECKS = {
   '1.0.0 profile': [
     'home rows and cards match the upgraded library',
     'library lists exactly the visible legacy games'
+  ],
+  'rom launch': [
+    'library opens the seeded ROM game',
+    'the ROM switch is on by default',
+    'Play passes the ROM to the emulator',
+    'the switch turns off before saving',
+    'Save profile reports the switch was saved',
+    'the saved switch survives reopening the game page',
+    'opting out launches the emulator without the ROM'
   ]
 }
 
@@ -70,7 +79,7 @@ const EXPECTED_CHECKS = [
   ...Object.entries(PROFILE_CHECKS).flatMap(([label, names]) =>
     [...BOOT_CHECKS, ...names].map((name) => `${label}: ${name}`)
   ),
-  'no renderer console errors in either boot'
+  'no renderer console errors in any boot'
 ]
 const appLog = createAppLog('verify-dist')
 
@@ -80,6 +89,27 @@ const CONSOLE = { root: '[data-jf-console="1"]', hero: 'main > section' }
 
 /** How many leading shelf cards are guaranteed on screen and therefore sampled. */
 const SHELF_SAMPLE = 6
+
+/** The ROM-launch profile's game and the stub emulator's argv record. */
+const ROM_GAME = 'ROM Launch Probe'
+const ROM_FILE = path.join('roms', `${ROM_GAME}.nes`)
+const ROM_RECORD = 'stub-args.json'
+
+/** The game page's ROM switch and its launch button, as rendered in the packaged build. */
+const ROM_DETAIL = `(() => {
+  const detail = document.querySelector('[data-jf-detail="1"]')
+  if (!detail) return null
+  const switchLabel = [...detail.querySelectorAll('label')].find((entry) => entry.textContent.includes('Launch the ROM directly'))
+  const toggle = switchLabel?.querySelector('input[type="checkbox"]')
+  const play = [...detail.querySelectorAll('button')].find((entry) => ['Play', 'Resume'].includes(entry.textContent.trim()))
+  return {
+    open: true,
+    switch: Boolean(toggle),
+    direct: Boolean(toggle?.checked),
+    canPlay: Boolean(play && !play.disabled),
+    playLabel: play?.textContent.trim() ?? null
+  }
+})()`
 
 /** Rows, cards, hero text and raw artwork counts inside `root`. */
 const layoutProbe = ({ root, hero }) => `(() => {
@@ -267,6 +297,154 @@ async function checkLegacyProfile({ label, evaluate, read, check, expected }) {
   })
 }
 
+/**
+ * The per-game ROM switch has to be right in the packaged launcher, not just in
+ * buildLaunchCommand: Play has to hand the stub the ROM, Save has to persist the
+ * opt-out, and Play after reopening has to leave the ROM out.
+ */
+async function checkRomLaunch({ label, evaluate, read, check, profile }) {
+  const record = path.join(profile, ROM_RECORD)
+  const rom = path.join(profile, ROM_FILE)
+
+  const openDetail = async () => {
+    await evaluate(`document.querySelector('button[aria-label="Library"]')?.click()`)
+    await read(`document.querySelector('main[data-jf-view]')?.getAttribute('data-jf-view') === 'library'`, Boolean)
+    const card = await read(
+      `(() => {
+        const entry = [...document.querySelectorAll('[data-game-id]')].find((card) =>
+          card.getAttribute('aria-label')?.startsWith(${JSON.stringify(ROM_GAME)})
+        )
+        return entry ? entry.getAttribute('aria-label') : null
+      })()`,
+      Boolean
+    )
+    if (!card) return null
+    await evaluate(`(() => {
+      const entry = [...document.querySelectorAll('[data-game-id]')].find((card) =>
+        card.getAttribute('aria-label')?.startsWith(${JSON.stringify(ROM_GAME)})
+      )
+      entry?.click()
+      return Boolean(entry)
+    })()`)
+    return read(ROM_DETAIL, (state) => Boolean(state?.open))
+  }
+
+  /** Clicks Play/Resume once the launcher has returned to idle and the button is enabled. */
+  const clickPlay = () =>
+    read(
+      `(() => {
+        const detail = document.querySelector('[data-jf-detail="1"]')
+        const play = detail && [...detail.querySelectorAll('button')].find(
+          (entry) => ['Play', 'Resume'].includes(entry.textContent.trim()) && !entry.disabled
+        )
+        if (!play) return null
+        play.click()
+        return play.textContent.trim()
+      })()`,
+      Boolean
+    )
+
+  /** The stub writes on process start; wait for that, not for a timer. */
+  const waitForArgs = async () => {
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if (fs.existsSync(record)) {
+        try {
+          return JSON.parse(fs.readFileSync(record, 'utf8'))
+        } catch {
+          /* the stub is still writing */
+        }
+      }
+      await delay(100)
+    }
+    return null
+  }
+
+  const opened = await openDetail()
+  check(
+    `${label}: library opens the seeded ROM game`,
+    Boolean(opened?.switch),
+    opened ? `switch=${opened.direct ? 'on' : 'off'}` : 'game page did not open'
+  )
+  if (!opened) return
+  check(`${label}: the ROM switch is on by default`, opened.direct, `switch=${opened.direct ? 'on' : 'off'}`)
+
+  fs.rmSync(record, { force: true })
+  const directPlay = await clickPlay()
+  const directArgs = await waitForArgs()
+  check(
+    `${label}: Play passes the ROM to the emulator`,
+    Boolean(directPlay) &&
+      Array.isArray(directArgs) &&
+      directArgs.length === 1 &&
+      path.resolve(directArgs[0]) === path.resolve(rom),
+    `button=${directPlay ?? 'missing'} stub=${JSON.stringify(directArgs)}`
+  )
+
+  const turnedOff = await read(
+    `(() => {
+      const detail = document.querySelector('[data-jf-detail="1"]')
+      const switchLabel = [...detail.querySelectorAll('label')].find((entry) => entry.textContent.includes('Launch the ROM directly'))
+      const toggle = switchLabel?.querySelector('input[type="checkbox"]')
+      if (!toggle || !toggle.checked) return null
+      toggle.click()
+      return true
+    })()`,
+    Boolean
+  )
+  const off = await read(ROM_DETAIL, (state) => Boolean(state?.switch) && state.direct === false)
+  check(
+    `${label}: the switch turns off before saving`,
+    Boolean(turnedOff && off),
+    `switch=${off?.direct === false ? 'off' : 'unchanged'}`
+  )
+
+  const saveClicked = await evaluate(`(() => {
+    const detail = document.querySelector('[data-jf-detail="1"]')
+    const save = detail && [...detail.querySelectorAll('button')].find((entry) => entry.textContent.trim() === 'Save profile')
+    save?.click()
+    return Boolean(save)
+  })()`)
+  const saved = await read(
+    `(() => {
+      const detail = document.querySelector('[data-jf-detail="1"]')
+      const save = detail && [...detail.querySelectorAll('button')].find((entry) =>
+        ['Save profile', 'Profile saved'].includes(entry.textContent.trim())
+      )
+      return save?.textContent.trim() ?? null
+    })()`,
+    (text) => text === 'Profile saved'
+  )
+  check(
+    `${label}: Save profile reports the switch was saved`,
+    Boolean(saveClicked) && saved === 'Profile saved',
+    `button=${saved ?? 'missing'}`
+  )
+
+  const closed = await evaluate(`(() => {
+    const detail = document.querySelector('[data-jf-detail="1"]')
+    const back = detail && [...detail.querySelectorAll('button')].find((entry) => entry.textContent.includes('Back to library'))
+    back?.click()
+    return Boolean(back)
+  })()`)
+  await read(`!document.querySelector('[data-jf-detail="1"]')`, Boolean)
+  const reopened = await openDetail()
+  check(
+    `${label}: the saved switch survives reopening the game page`,
+    Boolean(closed) && Boolean(reopened?.switch) && reopened.direct === false,
+    `switch=${reopened?.direct === false ? 'off' : 'on'}`
+  )
+
+  fs.rmSync(record, { force: true })
+  const barePlay = await clickPlay()
+  const bareArgs = await waitForArgs()
+  check(
+    `${label}: opting out launches the emulator without the ROM`,
+    Boolean(barePlay) && Array.isArray(bareArgs) && bareArgs.length === 0,
+    `button=${barePlay ?? 'missing'} stub=${JSON.stringify(bareArgs)}`
+  )
+}
+
 async function main() {
   await preflight({
     label: 'verify:dist',
@@ -306,7 +484,7 @@ async function main() {
       const readLayout = (surface) =>
         read(layoutProbe(surface), (layout) => artState(layout) !== 'pending')
 
-      await checks({ label, evaluate, read, readLayout, check, expected })
+      await checks({ label, evaluate, read, readLayout, check, expected, profile })
 
       problems.push(...consoleProblems(events, label))
     } finally {
@@ -331,14 +509,20 @@ async function main() {
       seeder: 'scripts/seed-legacy.ts',
       checks: checkLegacyProfile
     })
+    await verifyProfile({
+      label: 'rom launch',
+      profile: path.join(ROOT, 'rom-launch'),
+      seeder: 'scripts/seed-rom-launch.ts',
+      checks: checkRomLaunch
+    })
   } finally {
     removeDir(ROOT)
   }
 
   check(
-    'no renderer console errors in either boot',
+    'no renderer console errors in any boot',
     problems.length === 0,
-    problems.length ? problems.slice(0, 5).join(' | ') : 'both boots clean'
+    problems.length ? problems.slice(0, 5).join(' | ') : 'all boots clean'
   )
 
   const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'packaged-build checks' })

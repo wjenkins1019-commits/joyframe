@@ -294,7 +294,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run typecheck` | TypeScript checks for main and renderer |
 | `npm run smoke` | Backend integration smoke test |
 | `npm run verify:pad` | Drive the controller suite in dev Electron with a virtual pad |
-| `npm run verify:dist` | Boot the packaged build against seeded demo and 1.0.0 profiles; check Home, Console Mode and the upgraded library |
+| `npm run verify:dist` | Boot the packaged build against seeded demo, 1.0.0 and ROM-launch profiles; check Home, Console Mode, the upgraded library, and the ROM switch's saved launch behaviour through a stub emulator |
 | `npm run verify:dist-pad` | Run the controller suite against the packaged build on a seeded demo profile |
 | `npm run verify:first-run` | Boot the packaged build on a throwaway empty profile; check the welcome screen, empty library and fresh database |
 | `npm run verify:freshness` | Exercise the packaged-build content guard with real fixture archives, without touching `release/` |
