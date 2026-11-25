@@ -90,6 +90,10 @@ jobs:
       # renderer with a fake standard-mapping pad and real DevTools input.
       - name: Controller suite
         id: controller
+        env:
+          # The probe prints this name into the failure summary; the upload
+          # below uses the same name.
+          JF_FAILURE_ARTIFACTS: controller-suite-dev-artifacts-attempt-${{ github.run_attempt }}
         run: npm run verify:pad
 
       # The suite's screenshots and the app's own output are the evidence a red
@@ -139,19 +143,11 @@ jobs:
           set -o pipefail
           npm run dist 2>&1 | tee dist.log
 
-      # dist.log is the build's own account of the package, including the icon
-      # substitution warning the icon check exists to catch. Any installer
-      # failure may need that context, so keep the log for icon-check and
-      # packaged-suite failures too instead of forcing a rebuild to read it.
-      - name: Upload installer build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-build-log-attempt-${{ github.run_attempt }}
-          path: dist.log
-          if-no-files-found: warn
-
       - name: Prove the installer used the project icon
+        env:
+          # The probe prints this name into the failure summary; the upload at
+          # the end of the job uses the same name.
+          JF_FAILURE_ARTIFACTS: installer-build-log-attempt-${{ github.run_attempt }}
         run: npm run verify:installer
 
       # Uses the package built above: seeds a throwaway profile, drives
@@ -159,6 +155,9 @@ jobs:
       # run unless the asar matches the current out/.
       - name: Controller suite against the packaged build
         id: packaged-controller
+        env:
+          # Both artifacts this job uploads when the packaged suite fails.
+          JF_FAILURE_ARTIFACTS: controller-suite-packaged-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
         run: npm run verify:dist-pad
 
       - name: Upload packaged controller screenshots and app log
@@ -173,3 +172,14 @@ jobs:
           # The screenshots live under a dot-directory, which upload-artifact
           # skips unless this is on.
           include-hidden-files: true
+
+      # Runs last on purpose: failure() here covers the build, the icon check
+      # and the packaged suite alike, while an upload placed after the build
+      # could never see the later two. dist.log is their shared context.
+      - name: Upload installer build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-build-log-attempt-${{ github.run_attempt }}
+          path: dist.log
+          if-no-files-found: warn

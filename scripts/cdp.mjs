@@ -153,6 +153,72 @@ export async function preflight({ label, needs = [], port, portVariable = 'JF_DE
   }
 }
 
+/** Artifact names a workflow step exports for the failure summary. */
+export function failureArtifacts() {
+  return (process.env.JF_FAILURE_ARTIFACTS ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+}
+
+/** Escape a workflow-command payload; properties also escape `:` and `,`. */
+const escapeCommand = (text, property = false) => {
+  const escaped = String(text).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
+  return property ? escaped.replace(/:/g, '%3A').replace(/,/g, '%2C') : escaped
+}
+
+/** Keep a detail on one table row; a literal pipe must not split the cell. */
+const tableCell = (text) => String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
+
+/**
+ * Make a red probe readable from the run page.
+ *
+ * Annotations put each failed check in the run's annotations view, and the job
+ * summary keeps the same list beside the artifacts the job uploads, so triage
+ * does not begin with a download. Both are written only inside Actions; a
+ * local run keeps its plain output. A failed summary write is reported but
+ * never changes the probe's verdict.
+ */
+function reportFailure({ subject, total, failed, problems, artifacts }) {
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    for (const result of failed) {
+      console.log(`::error title=${escapeCommand(result.name, true)}::${escapeCommand(result.detail ?? '')}`)
+    }
+    if (problems.length) {
+      console.log(
+        `::error title=${escapeCommand(`${subject} did not match its declared list`, true)}::${escapeCommand(problems.join('. '))}`
+      )
+    }
+  }
+
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY
+  if (!summaryFile) return
+  const lines = [
+    failed.length ? `## ${subject} — ${failed.length} of ${total} failed` : `## ${subject} — run incomplete`,
+    ''
+  ]
+  if (failed.length) {
+    lines.push('| Check | Detail |', '| --- | --- |')
+    for (const result of failed) {
+      lines.push(`| ${tableCell(result.name)} | ${tableCell(result.detail ?? '')} |`)
+    }
+    lines.push('')
+  }
+  if (problems.length) {
+    lines.push('The run does not match its declared check list:', '')
+    for (const problem of problems) lines.push(`- ${problem}`)
+    lines.push('')
+  }
+  if (artifacts.length) {
+    lines.push(`Artifacts uploaded for this failure: ${artifacts.map((name) => `\`${name}\``).join(', ')}`, '')
+  }
+  try {
+    fs.appendFileSync(summaryFile, `${lines.join('\n')}\n`)
+  } catch (error) {
+    console.error(`Could not append to the job summary — ${error.message}`)
+  }
+}
+
 /**
  * Print a probe's checks and hold the run to the list the suite declares.
  *
@@ -162,27 +228,33 @@ export async function preflight({ label, needs = [], port, portVariable = 'JF_DE
  * that, and catches a renamed check too: a rename has to be made in the
  * declaration as well, instead of quietly shifting a count.
  *
+ * A red run also annotates each failed check and appends them, with the
+ * artifact names the caller passes, to the job summary. See reportFailure.
+ *
  * Returns true only when exactly the declared checks ran and every check passed.
  */
-export function reportChecks(results, { expected, subject }) {
+export function reportChecks(results, { expected, subject, artifacts = [] }) {
   for (const result of results) {
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
   }
   const ran = new Set(results.map((result) => result.name))
   const missing = expected.filter((name) => !ran.has(name))
   const undeclared = [...ran].filter((name) => !expected.includes(name))
-  if (missing.length || undeclared.length) {
-    const problems = []
-    if (missing.length) {
-      problems.push(`${missing.length} of ${expected.length} declared ${subject} never ran: ${missing.join(' | ')}`)
-    }
-    if (undeclared.length) problems.push(`undeclared ${subject} ran: ${undeclared.join(' | ')}`)
-    console.log(`\nFAIL  ${problems.join('. ')}. The run does not match its declared check list.`)
-    return false
+  const failed = results.filter((result) => !result.ok)
+  const problems = []
+  if (missing.length) {
+    problems.push(`${missing.length} of ${expected.length} declared ${subject} never ran: ${missing.join(' | ')}`)
   }
-  const failed = results.filter((result) => !result.ok).length
-  console.log(`\n${results.length - failed}/${results.length} ${subject} passed.`)
-  return failed === 0
+  if (undeclared.length) problems.push(`undeclared ${subject} ran: ${undeclared.join(' | ')}`)
+  if (problems.length) {
+    console.log(`\nFAIL  ${problems.join('. ')}. The run does not match its declared check list.`)
+  } else {
+    console.log(`\n${results.length - failed.length}/${results.length} ${subject} passed.`)
+  }
+  if (failed.length || problems.length) {
+    reportFailure({ subject, total: results.length, failed, problems, artifacts })
+  }
+  return failed.length === 0 && problems.length === 0
 }
 
 /**

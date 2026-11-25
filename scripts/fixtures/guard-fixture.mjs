@@ -29,6 +29,18 @@ const [mode, work] = process.argv.slice(2)
 const GUARD_CHECKS = ['first', 'second', 'third']
 const guardResults = (names) => names.map((name) => ({ name, ok: true, detail: 'ok' }))
 
+if (mode === 'failed-check') {
+  // A red check whose detail contains a pipe, plus the artifact the job uploads.
+  const complete = reportChecks(
+    [
+      { name: 'first', ok: true, detail: 'ok' },
+      { name: 'second', ok: false, detail: 'pad 1 | stuck at 0.5' }
+    ],
+    { expected: ['first', 'second'], subject: 'guard checks', artifacts: ['guard-artifact-attempt-1'] }
+  )
+  process.exit(complete ? 0 : 1)
+}
+
 if (mode === 'short-list') {
   // A probe that skipped a block: two of the three declared checks ran.
   const complete = reportChecks(guardResults(GUARD_CHECKS.slice(0, 2)), {

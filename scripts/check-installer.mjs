@@ -18,7 +18,7 @@
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
-import { reportChecks } from './cdp.mjs'
+import { failureArtifacts, reportChecks } from './cdp.mjs'
 
 const require = createRequire(import.meta.url)
 const asarLib = require('@electron/asar')
@@ -100,6 +100,7 @@ const ok = reportChecks(results, {
     'the package archive is readable',
     ...needed.map((name) => `the package carries resources/${name}`)
   ],
-  subject: 'installer checks'
+  subject: 'installer checks',
+  artifacts: failureArtifacts()
 })
 process.exit(ok ? 0 : 1)

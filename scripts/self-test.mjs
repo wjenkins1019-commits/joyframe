@@ -47,6 +47,28 @@ const CASES = [
     stdout: ['FAIL  1 of 3 declared guard checks never ran: third']
   },
   {
+    mode: 'short-list',
+    name: 'an incomplete run is annotated and summarized for the run page',
+    exit: 1,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: [
+      '::error title=guard checks did not match its declared list::1 of 3 declared guard checks never ran: third'
+    ],
+    summary: ['## guard checks — run incomplete', '1 of 3 declared guard checks never ran: third']
+  },
+  {
+    mode: 'failed-check',
+    name: 'a failed check is annotated and summarized with its artifact',
+    exit: 1,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: ['::error title=second::pad 1 | stuck at 0.5'],
+    summary: [
+      '## guard checks — 1 of 2 failed',
+      '| second | pad 1 \\| stuck at 0.5 |',
+      '`guard-artifact-attempt-1`'
+    ]
+  },
+  {
     mode: 'renamed-list',
     name: 'a renamed check fails even though the count is unchanged',
     exit: 1,
@@ -112,13 +134,20 @@ const results = []
 const check = (name, ok, detail) => results.push({ name, ok, detail })
 
 try {
-  for (const testCase of CASES) {
-    const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, ROOT], { encoding: 'utf8' })
+  for (const [index, testCase] of CASES.entries()) {
+    // One summary file per case, so an appended section cannot satisfy another.
+    const summaryFile = testCase.summary ? path.join(ROOT, `${index}-${testCase.mode}.md`) : ''
+    const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, ROOT], {
+      encoding: 'utf8',
+      env: { ...process.env, ...(testCase.env ?? {}), GITHUB_STEP_SUMMARY: summaryFile }
+    })
     const stdout = run.stdout ?? ''
     const stderr = run.stderr ?? ''
+    const summary = summaryFile && fs.existsSync(summaryFile) ? fs.readFileSync(summaryFile, 'utf8') : ''
     const missing = [
       ...(testCase.stdout ?? []).filter((text) => !stdout.includes(text)),
-      ...(testCase.stderr ?? []).filter((text) => !stderr.includes(text))
+      ...(testCase.stderr ?? []).filter((text) => !stderr.includes(text)),
+      ...(testCase.summary ?? []).filter((text) => !summary.includes(text))
     ]
     const unexpected = (testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text))
     const problems = []

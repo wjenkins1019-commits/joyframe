@@ -55,7 +55,11 @@ const EXPECTED_CHECKS = [
   'the packaged artifact is still gated on the packaged-controller step',
   'the installer log uploads on any installer failure',
   'every failure upload keeps a run-attempt suffix',
-  'every failure upload of a dot-directory opts into hidden files'
+  'every failure upload of a dot-directory opts into hidden files',
+  'the installer log upload runs after the packaged suite',
+  'the controller step names the artifact its summary lists',
+  'the packaged step names both artifacts its summary lists',
+  'the icon check names the installer log artifact'
 ]
 
 /** A step's `path:` is a block scalar; compare the non-empty lines as a set. */
@@ -155,6 +159,42 @@ check(
   'every failure upload of a dot-directory opts into hidden files',
   dottedUploads.every((upload) => upload.step.with?.['include-hidden-files'] === true),
   dottedUploads.map((upload) => `${artifactName(upload.step)}=${upload.step.with?.['include-hidden-files'] ?? '(unset)'}`).join(' | ')
+)
+
+// The upload must be reached after every step it has to cover, or its
+// failure() gate can never see the failure it exists for.
+const installerSteps = workflow.jobs.installer.steps ?? []
+const logIndex = installerSteps.findIndex((step) => artifactName(step) === EXPECTED_ARTIFACTS[1].name)
+const packagedIndex = installerSteps.findIndex((step) => step.id === 'packaged-controller')
+check(
+  'the installer log upload runs after the packaged suite',
+  logIndex >= 0 && packagedIndex >= 0 && logIndex > packagedIndex,
+  `log step ${logIndex}, packaged step ${packagedIndex}`
+)
+
+/** The artifact names a probe step exports to its failure summary. */
+const envArtifacts = (step) =>
+  String(step?.env?.JF_FAILURE_ARTIFACTS ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+const devStep = (workflow.jobs['controller-checks']?.steps ?? []).find((step) => step.id === 'controller')
+const iconStep = installerSteps.find((step) => step.run === 'npm run verify:installer')
+const packagedStep = installerSteps.find((step) => step.id === 'packaged-controller')
+check(
+  'the controller step names the artifact its summary lists',
+  envArtifacts(devStep).includes(EXPECTED_ARTIFACTS[0].name),
+  `JF_FAILURE_ARTIFACTS=${devStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}`
+)
+check(
+  'the packaged step names both artifacts its summary lists',
+  [EXPECTED_ARTIFACTS[2].name, EXPECTED_ARTIFACTS[1].name].every((name) => envArtifacts(packagedStep).includes(name)),
+  `JF_FAILURE_ARTIFACTS=${packagedStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}`
+)
+check(
+  'the icon check names the installer log artifact',
+  envArtifacts(iconStep).includes(EXPECTED_ARTIFACTS[1].name),
+  `JF_FAILURE_ARTIFACTS=${iconStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}`
 )
 
 const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })

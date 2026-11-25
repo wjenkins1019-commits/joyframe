@@ -34,7 +34,15 @@
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createAppLog, MISSING_ELECTRON, MISSING_PACKAGED, preflight, reportChecks, reportUnfinishedRun } from './cdp.mjs'
+import {
+  createAppLog,
+  failureArtifacts,
+  MISSING_ELECTRON,
+  MISSING_PACKAGED,
+  preflight,
+  reportChecks,
+  reportUnfinishedRun
+} from './cdp.mjs'
 import { assertBuildFresh } from './build-fresh.mjs'
 import { assertPackagedBuildFresh } from './packaged-build.mjs'
 
@@ -45,6 +53,9 @@ const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const SHOT_DIR = '.verify-shots'
 const RUN = DIST ? 'verify-dist-pad' : 'verify-pad'
+// The job uploads these on failure; the summary lists them so a red run can be
+// triaged from the run page.
+const ARTIFACTS = failureArtifacts()
 const finishRun = reportUnfinishedRun('verify:pad')
 const appLog = createAppLog(RUN)
 
@@ -1269,7 +1280,11 @@ async function main() {
   // A capture still running belongs to this run's evidence; finish it before
   // the summary so the files and the exit status describe the same run.
   await failureCapture
-  const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'controller checks' })
+  const complete = reportChecks(results, {
+    expected: EXPECTED_CHECKS,
+    subject: 'controller checks',
+    artifacts: ARTIFACTS
+  })
   finishRun()
 
   const exited = app.exitCode === null ? new Promise((resolve) => app.once('exit', resolve)) : Promise.resolve()
