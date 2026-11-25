@@ -78,16 +78,16 @@ function describeBuild() {
   } catch (error) {
     rows.push(`  installed  ${INSTALLED_ASAR} could not be re-read: ${error.message}`)
   }
-  const installer = fs.existsSync('release')
-    ? fs
-        .readdirSync('release')
-        .filter((name) => /^JOYFRAME Setup .*\.exe$/i.test(name))
-        .map((name) => path.join('release', name))[0]
-    : null
+  // Name the installer for the version this run certified, not whichever
+  // `JOYFRAME Setup *.exe` a leftover happens to put first in the directory
+  // listing: `dist` never clears release/, so an older installer can sit next
+  // to the one that was just built, and the closing line would send the reader
+  // to install bytes the certificate does not cover.
+  const installer = path.join('release', `JOYFRAME Setup ${version}.exe`)
   rows.push(
-    installer
+    fs.existsSync(installer)
       ? `  installer  ${installer}  (${megabytes(fs.statSync(installer).size)}) — install this file, or the copy above is stale`
-      : '  installer  no `release/JOYFRAME Setup *.exe` found — `npm run dist` should have produced one'
+      : `  installer  no \`${installer}\` found — \`npm run dist\` should have produced it, and an installer for another version does not cover this build`
   )
   return rows.join('\n')
 }
