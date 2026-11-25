@@ -103,6 +103,9 @@ jobs:
             .verify-shots
             .verify-logs/verify-pad.log
           if-no-files-found: warn
+          # The screenshots live under a dot-directory, which upload-artifact
+          # skips unless this is on.
+          include-hidden-files: true
 
   # `npm run dist` is the only step that proves the tracked brand assets reach a
   # real package, and nothing in CI ran it — so a clean checkout could package
@@ -154,3 +157,6 @@ jobs:
             .verify-shots
             .verify-logs/verify-dist-pad.log
           if-no-files-found: warn
+          # The screenshots live under a dot-directory, which upload-artifact
+          # skips unless this is on.
+          include-hidden-files: true
