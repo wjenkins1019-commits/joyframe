@@ -858,6 +858,15 @@ async function main() {
   const clearLog = () => evaluate('(window.__focusLog.length = 0, true)')
   const between = (value, min, max) => value >= min && value <= max
   const gaps = (log) => log.slice(1).map((entry, index) => Math.round(entry.t - log[index].t))
+  /** Wait until the focus log has `count` entries; false if it never does. */
+  const waitForMoves = async (count, timeout = 5000) => {
+    const deadline = Date.now() + timeout
+    while (Date.now() < deadline) {
+      if ((await readLog()).length >= count) return true
+      await delay(50)
+    }
+    return false
+  }
   /** Hold an input for `ms`, release it, then let focus settle. */
   const hold = async (down, up, ms) => {
     await evaluate(down)
@@ -985,24 +994,30 @@ async function main() {
   await walk('ArrowLeft')
   const beforeSwitch = (await readFocus())?.x ?? 0
   await evaluate('(window.__setPad(1, 15, true), true)')
-  await delay(650) // edge plus several repeats on the active pad
-  await clearLog()
-  // Atomic handover: the next poll sees pad 0 down and pad 1 up, never a zero frame.
-  await evaluate('(window.__setPad(0, 15, true), window.__setPad(1, 15, false), true)')
-  // Release before a third repeat can land: the app notices the release on its
-  // 90ms poll, so holding longer lets a healthy repeat fire after the release
-  // call and makes a clean handover look like three moves.
-  await delay(240)
-  await evaluate('(window.__setPad(0, 15, false), true)')
+  // Wait for the edge and one repeat, so the handover really lands mid-hold; a
+  // fixed sleep can elapse before a loaded page has polled even once.
+  const held = await waitForMoves(2)
+  // Atomic handover: the next poll sees pad 0 down and pad 1 up, never a zero
+  // frame. The release is scheduled in the page, because a delayed DevTools
+  // call can hold the pad for seconds and turn healthy repeats into a dozen
+  // moves instead of the one or two a 240ms hold allows.
+  await evaluate(`(() => {
+    window.__focusLog.length = 0
+    window.__setPad(0, 15, true)
+    window.__setPad(1, 15, false)
+    setTimeout(() => window.__setPad(0, 15, false), 240)
+    return true
+  })()`)
   await delay(450)
   const handover = await readLog()
   check(
     'pad switch mid-hold adds no duplicate step',
-    handover.length >= 1 &&
+    held &&
+      handover.length >= 1 &&
       handover.length <= 2 &&
       gaps(handover).every((gap) => gap >= 120) &&
       handover.every((entry) => entry.x > beforeSwitch),
-    `moves=${handover.length} gaps=${gaps(handover)}`
+    `held=${held} moves=${handover.length} gaps=${gaps(handover)}`
   )
 
   // The pad that took the hold is pinned now, so one tap must be exactly one step.
@@ -1010,10 +1025,14 @@ async function main() {
   // that fits the window, where stepping right changes rows and moves x left.
   await walk('ArrowLeft')
   const afterSwitch = (await readFocus())?.x ?? 0
-  await clearLog()
-  await evaluate('(window.__setPad(0, 15, true), true)')
-  await delay(220)
-  await evaluate('(window.__setPad(0, 15, false), true)')
+  // Release in the page too: a delayed DevTools call would hold the pad past
+  // the 400ms repeat delay and make one tap look like two steps.
+  await evaluate(`(() => {
+    window.__focusLog.length = 0
+    window.__setPad(0, 15, true)
+    setTimeout(() => window.__setPad(0, 15, false), 220)
+    return true
+  })()`)
   await delay(450)
   const switchTap = await readLog()
   check(

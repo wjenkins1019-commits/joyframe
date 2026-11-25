@@ -87,9 +87,12 @@ jobs:
         run: npm ci
 
       # Builds out/ itself, seeds a throwaway profile, then drives the real
-      # renderer with a fake standard-mapping pad and real DevTools input.
+      # renderer with a fake standard-mapping pad and real DevTools input. A
+      # step timeout fails the suite while the job keeps running, so the upload
+      # below still gets the screenshots; a job timeout would skip it.
       - name: Controller suite
         id: controller
+        timeout-minutes: 8
         env:
           # The probe prints this name into the failure summary; the upload
           # below uses the same name.

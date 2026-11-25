@@ -73,7 +73,8 @@ const EXPECTED_CHECKS = [
   'the packaged profile probes run after the packaged controller and before the log upload',
   'each packaged profile upload follows its probe and only runs on that probe failure',
   'each probe step names the artifacts its summary lists',
-  'every installer probe has a timeout that fits inside the job'
+  'every installer probe has a timeout that fits inside the job',
+  'the dev controller probe has a timeout that fits inside the job'
 ]
 
 /** A step's `path:` is a block scalar; compare the non-empty lines as a set. */
@@ -236,6 +237,17 @@ check(
     probeTimeouts.every((minutes) => Number.isInteger(minutes) && minutes > 0) &&
     probeMinutes < workflow.jobs.installer['timeout-minutes'],
   `${probeSteps.map((step) => `${step.id ?? step.name} ${step['timeout-minutes'] ?? '(unset)'}m`).join(' | ')} — ${probeMinutes}m total`
+)
+
+// The dev controller suite has the same failure upload to reach, so a hang
+// there needs a step timeout below the job's too.
+const devJob = workflow.jobs['controller-checks']
+const devProbe = (devJob?.steps ?? []).find((step) => step.id === 'controller')
+const devTimeout = devProbe?.['timeout-minutes']
+check(
+  'the dev controller probe has a timeout that fits inside the job',
+  Number.isInteger(devTimeout) && devTimeout > 0 && devTimeout < devJob['timeout-minutes'],
+  `controller ${devTimeout ?? '(unset)'}m of ${devJob?.['timeout-minutes'] ?? '(unset)'}m`
 )
 
 const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })
