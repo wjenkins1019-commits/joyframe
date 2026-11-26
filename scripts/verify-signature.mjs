@@ -64,8 +64,13 @@ let status
 try {
   status = await signatureStatus(exe)
 } catch (error) {
-  console.error(`signature check failed for ${exe}: ${error.message}`)
-  process.exit(2)
+  if (requireSigned) {
+    console.error(`signature check failed for ${exe}: ${error.message}`)
+    process.exit(1)
+  }
+  console.log(`signature check unavailable for ${exe} — treating as unsigned (this runner cannot load Get-AuthenticodeSignature): ${String(error.message).slice(0, 200)}`)
+  console.log('unsigned build — updates stay disabled by design; add Azure signing secrets to prove the signed path')
+  process.exit(0)
 }
 
 console.log(`Authenticode status for ${exe}: ${status}`)
