@@ -25,22 +25,39 @@ if (!exe) {
   process.exit(2)
 }
 
-function signatureStatus(exePath) {
+function runPs(exe, args) {
   return new Promise((resolve, reject) => {
-    const quoted = `'${exePath.replace(/'/g, "''")}'`
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', `(Get-AuthenticodeSignature -FilePath ${quoted}).Status`],
-      { timeout: 15000 },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(`${error.message}${stderr ? `: ${String(stderr).trim()}` : ''}`))
-          return
-        }
-        resolve(String(stdout).trim())
+    execFile(exe, args, { timeout: 15000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`${error.message}${stderr ? `: ${String(stderr).trim().slice(0, 400)}` : ''}`))
+        return
       }
-    )
+      resolve(String(stdout).trim())
+    })
   })
+}
+
+async function signatureStatus(exePath) {
+  const quoted = `'${exePath.replace(/'/g, "''")}'`
+  // Windows PowerShell 5.1 owns Get-AuthenticodeSignature. Under CI the job
+  // shell is PowerShell 7 (pwsh), where that cmdlet lives in
+  // Microsoft.PowerShell.Security but the module can fail to autoload — the
+  // exact failure that broke the 1.0.2 promotion run. Prefer 5.1 explicitly,
+  // then fall back to pwsh with an explicit import.
+  const ps51 = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+  const command = `(Get-AuthenticodeSignature -FilePath ${quoted}).Status`
+  try {
+    return await runPs(ps51, ['-NoProfile', '-NonInteractive', '-Command', command])
+  } catch (firstError) {
+    return await runPs('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Import-Module Microsoft.PowerShell.Security -ErrorAction Stop; ${command}`
+    ]).catch(() => {
+      throw firstError
+    })
+  }
 }
 
 let status
