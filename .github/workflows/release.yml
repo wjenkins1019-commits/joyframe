@@ -20,6 +20,9 @@
 # AZURE_SIGNING_PROFILE, AZURE_PUBLISHER_NAME (must exactly match the
 # certificate's CN).
 #
+# Full setup checklist — costs, portal steps, eligibility, SmartScreen
+# expectations and the post-secrets runbook: docs/azure-signing-checklist.md.
+#
 # Beta channel: a package version with a semver prerelease suffix (e.g.
 # `1.0.2-beta.0`, tag `v1.0.2-beta.0`) is staged as a GitHub *prerelease*
 # carrying both `latest.yml` and a `<channel>.yml` copy (`beta.yml`).
