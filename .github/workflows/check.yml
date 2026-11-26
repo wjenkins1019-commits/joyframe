@@ -309,6 +309,28 @@ jobs:
         timeout-minutes: 5
         run: npm run verify:installed
 
+      # One path is not a matrix: a per-user install landing in Program Files,
+      # an uninstaller wiping %APPDATA%/JOYFRAME, or a version mismatch would
+      # all stay green. This runs the per-user / uninstall / downgrade half
+      # here, where the all-users copy already exists to assert against — no
+      # elevation needed, it only adds and removes its own marker file inside
+      # the real profile directory and never deletes user data.
+      - name: Installer matrix — per-user, uninstall and downgrade paths
+        id: installer-matrix
+        timeout-minutes: 8
+        env:
+          JF_FAILURE_ARTIFACTS: installer-matrix-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:installer-matrix
+
+      - name: Upload installer-matrix artifacts
+        if: failure() && steps.installer-matrix.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-matrix-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-installer-matrix.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
       - name: Upload installed-copy artifacts
         if: failure() && steps.installed.outcome == 'failure'
         uses: actions/upload-artifact@v4

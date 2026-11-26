@@ -66,6 +66,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'installed-checks',
     paths: ['.verify-logs/verify-installed.log', '.verify-intro'],
     hidden: true
+  },
+  {
+    name: `installer-matrix-artifacts-attempt-${ATTEMPT}`,
+    label: 'the installer-matrix artifact keeps its name, path and hidden files',
+    job: 'installed-checks',
+    paths: ['.verify-logs/verify-installer-matrix.log'],
+    hidden: true
   }
 ]
 
@@ -82,7 +89,9 @@ const EXPECTED_CHECKS = [
   'each probe step names the artifacts its summary lists',
   'every installer probe has a timeout that fits inside the job',
   'the dev controller probe has a timeout that fits inside the job',
-  'the installed-copy job installs the built package and runs the installed probe'
+  'the installed-copy job installs the built package and runs the installed probe',
+  'the installer-matrix probe runs per-user, uninstall and downgrade paths',
+  'the installer-matrix upload follows its probe and only runs on that probe failure'
 ]
 
 /** A step's `path:` is a block scalar; compare the non-empty lines as a set. */
@@ -295,6 +304,30 @@ check(
         `probe ${probeTimeout ?? '(unset)'}m of ${installedJob['timeout-minutes'] ?? '(unset)'}m`
       ].join(' | ')
     : 'job installed-checks is missing'
+)
+
+// The all-users path alone is not a matrix: the per-user scope, the
+// uninstaller and the version advertisement need pins too, or a per-user
+// install landing in Program Files (or an uninstaller wiping user data)
+// stays green. The matrix step runs where the all-users copy already exists.
+const matrixStep = installedSteps.find((step) => step.id === 'installer-matrix')
+const matrixUpload = uploads.find((upload) => artifactName(upload.step) === 'installer-matrix-artifacts-attempt-${{ github.run_attempt }}')
+check(
+  'the installer-matrix probe runs per-user, uninstall and downgrade paths',
+  matrixStep?.run === 'npm run verify:installer-matrix' &&
+    Number.isInteger(matrixStep?.['timeout-minutes']) &&
+    matrixStep['timeout-minutes'] > 0 &&
+    matrixStep['timeout-minutes'] < installedJob['timeout-minutes'] &&
+    installedSteps.findIndex((step) => step.id === 'installer-matrix') > installedSteps.findIndex((step) => step.id === 'installed') &&
+    String(matrixStep?.env?.JF_FAILURE_ARTIFACTS ?? '').includes('installer-matrix-artifacts-attempt-'),
+  matrixStep
+    ? `run ${matrixStep.run}, timeout ${matrixStep['timeout-minutes']}m of ${installedJob['timeout-minutes']}m, artifacts ${matrixStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}`
+    : 'step installer-matrix is missing'
+)
+check(
+  'the installer-matrix upload follows its probe and only runs on that probe failure',
+  gatesOnProbe(matrixUpload, 'installer-matrix'),
+  matrixUpload ? condition(matrixUpload.step) : 'upload missing'
 )
 
 // ---- release.yml: draft → verify → promote must stay ordered and silent ----
