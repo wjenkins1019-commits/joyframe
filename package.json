@@ -35,6 +35,7 @@
     "verify:intro-name-pad": "node scripts/verify-intro-name-pad.ts",
     "verify:installer": "node scripts/check-installer.mjs",
     "verify:installer-matrix": "node scripts/verify-installer-matrix.mjs",
+    "verify:update-channels": "node scripts/verify-update-channels.mjs",
     "verify:signature": "node scripts/verify-signature.mjs",
     "verify:signing": "node scripts/verify-signing-readiness.mjs",
     "verify:installed-build": "node scripts/verify-installed-build.mjs",

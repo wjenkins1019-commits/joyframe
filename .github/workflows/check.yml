@@ -73,6 +73,31 @@ jobs:
       - name: Backend smoke test
         run: npm run smoke
 
+      # Beta bytes must never reach users who did not opt in: the workflow has
+      # to stage stable without a prerelease flag and beta with its channel
+      # manifest, the updater has to pin the channel explicitly, and the live
+      # releases have to honour it (releases/latest → stable with only
+      # latest.yml, every prerelease carrying its <channel>.yml). Runs here so
+      # every push proves the isolation, not just tag pushes.
+      - name: Prove beta builds never reach stable users
+        id: update-channels
+        timeout-minutes: 3
+        env:
+          # The probe prints this name into the failure summary; the upload
+          # below uses the same name.
+          JF_FAILURE_ARTIFACTS: update-channels-artifacts-attempt-${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: npm run verify:update-channels
+
+      - name: Upload update-channel artifacts
+        if: failure() && steps.update-channels.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-channels-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-update-channels.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
   # The controller suite is the only coverage of the game page's back button:
   # the page has to appear without moving, and one immediate click has to close
   # it. Both are regressions that shipped once, so the suite runs on every push

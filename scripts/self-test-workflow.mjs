@@ -68,6 +68,13 @@ const EXPECTED_ARTIFACTS = [
     hidden: true
   },
   {
+    name: `update-channels-artifacts-attempt-${ATTEMPT}`,
+    label: 'the update-channel artifact keeps its name, path and hidden files',
+    job: 'no-gui-checks',
+    paths: ['.verify-logs/verify-update-channels.log'],
+    hidden: true
+  },
+  {
     name: `installer-matrix-artifacts-attempt-${ATTEMPT}`,
     label: 'the installer-matrix artifact keeps its name, path and hidden files',
     job: 'installed-checks',
@@ -90,6 +97,8 @@ const EXPECTED_CHECKS = [
   'every installer probe has a timeout that fits inside the job',
   'the dev controller probe has a timeout that fits inside the job',
   'the installed-copy job installs the built package and runs the installed probe',
+  'the update-channel probe runs in no-gui-checks and fits inside the job',
+  'the update-channel upload follows its probe and only runs on that probe failure',
   'the installer-matrix probe runs per-user, uninstall and downgrade paths',
   'the installer-matrix upload follows its probe and only runs on that probe failure'
 ]
@@ -304,6 +313,32 @@ check(
         `probe ${probeTimeout ?? '(unset)'}m of ${installedJob['timeout-minutes'] ?? '(unset)'}m`
       ].join(' | ')
     : 'job installed-checks is missing'
+)
+
+// Channel isolation has to be proven on every push, not just on tags: the
+// no-gui job owns it because it needs no Electron, only the workflow text,
+// updates.ts and the live releases. The step carries its own attempt-suffixed
+// artifact, a timeout inside the job budget, and a failure-gated upload.
+const noGuiJob = workflow.jobs['no-gui-checks']
+const noGuiSteps = noGuiJob?.steps ?? []
+const channelStep = noGuiSteps.find((step) => step.id === 'update-channels')
+const channelUpload = uploads.find((upload) => artifactName(upload.step) === 'update-channels-artifacts-attempt-${{ github.run_attempt }}')
+check(
+  'the update-channel probe runs in no-gui-checks and fits inside the job',
+  channelStep?.run === 'npm run verify:update-channels' &&
+    Number.isInteger(channelStep?.['timeout-minutes']) &&
+    channelStep['timeout-minutes'] > 0 &&
+    channelStep['timeout-minutes'] < noGuiJob['timeout-minutes'] &&
+    String(channelStep?.env?.JF_FAILURE_ARTIFACTS ?? '').includes('update-channels-artifacts-attempt-') &&
+    String(channelStep?.env?.GH_TOKEN ?? '') === '${{ github.token }}',
+  channelStep
+    ? `run ${channelStep.run}, timeout ${channelStep['timeout-minutes']}m of ${noGuiJob['timeout-minutes']}m, token ${channelStep?.env?.GH_TOKEN ? 'wired' : 'missing'}`
+    : 'step update-channels is missing'
+)
+check(
+  'the update-channel upload follows its probe and only runs on that probe failure',
+  gatesOnProbe(channelUpload, 'update-channels'),
+  channelUpload ? condition(channelUpload.step) : 'upload missing'
 )
 
 // The all-users path alone is not a matrix: the per-user scope, the
