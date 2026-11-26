@@ -297,5 +297,218 @@ check(
     : 'job installed-checks is missing'
 )
 
-const complete = reportChecks(results, { expected: EXPECTED_CHECKS, subject: 'workflow checks' })
+// ---- release.yml: draft → verify → promote must stay ordered and silent ----
+// Two tag-push failures (draft 404 on a new prerelease tag, signature module
+// load on the stable promotion) only surfaced on a real push, because
+// self-test covered check.yml only. These parse release.yml so the next
+// draft/verify/promote, tag-guard, staging or signature-gate regression fails
+// locally instead of on a tag.
+const RELEASE_WORKFLOW = path.join('.github', 'workflows', 'release.yml')
+let release = null
+let releaseRaw = ''
+try {
+  releaseRaw = fs.readFileSync(RELEASE_WORKFLOW, 'utf8')
+  release = YAML.load(releaseRaw)
+} catch (error) {
+  check('release workflow parses', false, String(error.message))
+}
+if (release) {
+  const rJobs = release.jobs ?? {}
+  const rWindows = rJobs['windows-installer'] ?? {}
+  const rVerify = rJobs['verify-published'] ?? {}
+  const rPromote = rJobs['promote-release'] ?? {}
+  const rWindowsSteps = rWindows.steps ?? []
+  const rVerifySteps = rVerify.steps ?? []
+  const rPromoteSteps = rPromote.steps ?? []
+  const needsOf = (job) => [].concat(job?.needs ?? [])
+  const runText = (step) => String(step?.run ?? '')
+
+  check(
+    'release jobs are ordered windows-installer → verify-published → promote-release',
+    Boolean(rWindows.steps) &&
+      needsOf(rVerify).includes('windows-installer') &&
+      needsOf(rPromote).includes('verify-published'),
+    `verify needs ${needsOf(rVerify).join(',') || '(none)'}, promote needs ${needsOf(rPromote).join(',') || '(none)'}`
+  )
+
+  // New prerelease tags own only a draft, which the `releases/tags/*`
+  // endpoint 404s on with a read-only token. Write is the least privilege
+  // that can read the draft this job must prove before promotion.
+  const topPermissions = release.permissions?.contents ?? release.permissions
+  check(
+    'release keeps contents:write so draft lookups work',
+    topPermissions === 'write' && rVerify.permissions?.contents === 'write',
+    `top ${JSON.stringify(topPermissions)}, verify-published ${JSON.stringify(rVerify.permissions?.contents)}`
+  )
+
+  const guardIndex = rWindowsSteps.findIndex((s) => String(s?.name ?? '').toLowerCase().includes('guard tag'))
+  const buildIndex = rWindowsSteps.findIndex((s) => runText(s).includes('npm run dist'))
+  const guardText = guardIndex >= 0 ? runText(rWindowsSteps[guardIndex]) : ''
+  check(
+    'release tag guard runs before the build and refuses mismatched versions',
+    guardIndex >= 0 &&
+      buildIndex > guardIndex &&
+      guardText.includes('v$pkg') &&
+      guardText.includes('does not match package'),
+    guardIndex >= 0 ? `guard step ${guardIndex}, build step ${buildIndex}` : 'guard step missing'
+  )
+
+  const azureStep = rWindowsSteps.find((s) => runText(s).includes('enable-azure-signing.mjs'))
+  const azureEnv = Object.keys(azureStep?.env ?? {})
+  const azureKeys = [
+    'AZURE_TENANT_ID',
+    'AZURE_CLIENT_ID',
+    'AZURE_CLIENT_SECRET',
+    'AZURE_SIGNING_ENDPOINT',
+    'AZURE_SIGNING_ACCOUNT',
+    'AZURE_SIGNING_PROFILE',
+    'AZURE_PUBLISHER_NAME'
+  ]
+  check(
+    'release azure step is ungated and carries all 7 secrets',
+    Boolean(azureStep) && !azureStep.if && azureKeys.every((k) => azureEnv.includes(k)),
+    azureStep ? `if: ${azureStep.if ?? '(none)'}, env ${azureEnv.join(',')}` : 'enable-azure-signing step missing'
+  )
+
+  const pkgStep = rWindowsSteps.find((s) => s?.id === 'pkg')
+  const pkgText = runText(pkgStep)
+  check(
+    'release version/channel derivation matches the updater rule',
+    Boolean(pkgStep) &&
+      pkgText.includes('*-*') &&
+      pkgText.includes('prerelease=true') &&
+      pkgText.includes('prerelease=false') &&
+      pkgText.includes('channel=') &&
+      pkgText.includes('manifest='),
+    pkgStep ? `id pkg ${pkgText.slice(0, 120).replace(/\s+/g, ' ')}…` : 'id pkg step missing'
+  )
+
+  const betaCopy = rWindowsSteps.find((s) => runText(s).includes('latest.yml') && runText(s).includes('manifest'))
+  check(
+    'release beta manifest copy is prerelease-gated',
+    Boolean(betaCopy) && String(betaCopy.if ?? '').includes("steps.pkg.outputs.prerelease == 'true'"),
+    betaCopy ? `if: ${betaCopy.if ?? '(none)'}` : 'beta copy step missing'
+  )
+
+  const stageStable = rWindowsSteps.find((s) => String(s?.name ?? '').toLowerCase().includes('draft (stable)'))
+  const stageBeta = rWindowsSteps.find((s) => String(s?.name ?? '').toLowerCase().includes('draft (beta)'))
+  const stageUsesAction = (s) => String(s?.uses ?? '').startsWith('softprops/action-gh-release')
+  check(
+    'release stable and beta drafts stay draft with correct prerelease flags',
+    stageUsesAction(stageStable) &&
+      stageStable.with?.draft === true &&
+      stageStable.with?.prerelease === false &&
+      String(stageStable.if ?? '').includes("prerelease == 'false'") &&
+      stageUsesAction(stageBeta) &&
+      stageBeta.with?.draft === true &&
+      stageBeta.with?.prerelease === true &&
+      String(stageBeta.if ?? '').includes("prerelease == 'true'"),
+    `stable draft=${stageStable?.with?.draft} prerelease=${stageStable?.with?.prerelease} | beta draft=${stageBeta?.with?.draft} prerelease=${stageBeta?.with?.prerelease}`
+  )
+
+  const stableFiles = String(stageStable?.with?.files ?? '')
+  const betaFiles = String(stageBeta?.with?.files ?? '')
+  check(
+    'release drafts stage latest.yml always and the channel manifest on beta',
+    stableFiles.includes('latest.yml') &&
+      stageStable?.with?.fail_on_unmatched_files === true &&
+      betaFiles.includes('latest.yml') &&
+      betaFiles.includes('manifest') &&
+      stageBeta?.with?.fail_on_unmatched_files === true,
+    `stable: ${stableFiles.replace(/\s+/g, ' ').slice(0, 120)} | beta: ${betaFiles.replace(/\s+/g, ' ').slice(0, 160)}`
+  )
+
+  const digestStep = rVerifySteps.find((s) => runText(s).includes('release digest') || runText(s).includes('expectedHash'))
+  const digestText = runText(digestStep)
+  check(
+    'verify-published checks the download digest, size and latest.yml version',
+    Boolean(digestStep) &&
+      digestText.includes('Get-FileHash') &&
+      digestText.includes('sha256') &&
+      digestText.includes('latest.yml') &&
+      digestText.includes('manifestVersion'),
+    digestStep ? `download step found (${digestText.length} chars)` : 'download/digest step missing'
+  )
+
+  check(
+    'verify-published checks the channel manifest version on prereleases',
+    digestText.includes('channelFile') && digestText.includes('channelManifest'),
+    digestText.includes('channelFile') ? 'channel check present' : 'no channel check in download step'
+  )
+
+  const sigSteps = rVerifySteps.filter((s) => runText(s).includes('verify-signature.mjs'))
+  const sigGated = sigSteps.length === 2 && sigSteps.every((s) => runText(s).includes('--require-signed'))
+  const sigConditional = sigSteps.every((s) => runText(s).includes('AZURE_TENANT_ID') || runText(s).includes('require'))
+  check(
+    'verify-published requires a Valid signature only when signing was on',
+    sigGated && sigConditional,
+    `${sigSteps.length} signature steps: ${sigSteps.map((s) => runText(s).slice(0, 80).replace(/\s+/g, ' ')).join(' | ') || '(none)'}`
+  )
+
+  const installStep = rVerifySteps.find((s) => s?.id === 'install')
+  const installText = runText(installStep)
+  check(
+    'verify-published installs silently and waits for the exe',
+    installText.includes('/allusers') && installText.includes('/S') && installText.includes('C:\\Program Files\\JOYFRAME\\JOYFRAME.exe'),
+    installStep ? installText.slice(0, 140).replace(/\s+/g, ' ') : 'install step missing'
+  )
+
+  const bootStep = rVerifySteps.find((s) => s?.id === 'installed')
+  check(
+    'verify-published boots the published copy',
+    runText(bootStep).includes('verify-installed.mjs'),
+    bootStep ? runText(bootStep).slice(0, 80) : 'installed boot step missing'
+  )
+
+  const promoteText = rPromoteSteps.map(runText).join('\n')
+  check(
+    'promote-release publishes via gh release edit without touching prerelease',
+    promoteText.includes('gh release edit') &&
+      promoteText.includes('--draft=false') &&
+      !promoteText.includes('--prerelease'),
+    rPromoteSteps.length ? promoteText.slice(0, 160).replace(/\s+/g, ' ') : 'promote steps missing'
+  )
+
+  // A hung probe must fail on its own timeout while the job keeps running.
+  const rProbeTimeouts = [...rWindowsSteps, ...rVerifySteps]
+    .filter((s) => runText(s).startsWith('npm run verify:') || runText(s).includes('verify-signature.mjs'))
+    .map((s) => s['timeout-minutes'])
+  check(
+    'release probes carry timeouts inside their job budgets',
+    rProbeTimeouts.length > 0 &&
+      rProbeTimeouts.every((m) => m === undefined || (Number.isInteger(m) && m > 0)) &&
+      (rVerify['timeout-minutes'] ?? 0) > 0,
+    `verify-published ${rVerify['timeout-minutes'] ?? '(unset)'}m, probe timeouts ${rProbeTimeouts.map((m) => m ?? '(none)').join(',')}`
+  )
+
+  const enablerText = fs.readFileSync('scripts/enable-azure-signing.mjs', 'utf8')
+  check(
+    'signing enabler emits timestamped azureSignOptions',
+    ['publisherName', 'endpoint', 'certificateProfileName', 'codeSigningAccountName', 'timestampRfc3161', 'timestampDigest', 'timestamp.acs.microsoft.com'].every((token) =>
+      enablerText.includes(token)
+    ),
+    'enable-azure-signing.mjs must pin the Microsoft RFC 3161 timestamp server'
+  )
+}
+
+const RELEASE_CHECKS = [
+  'release jobs are ordered windows-installer → verify-published → promote-release',
+  'release keeps contents:write so draft lookups work',
+  'release tag guard runs before the build and refuses mismatched versions',
+  'release azure step is ungated and carries all 7 secrets',
+  'release version/channel derivation matches the updater rule',
+  'release beta manifest copy is prerelease-gated',
+  'release stable and beta drafts stay draft with correct prerelease flags',
+  'release drafts stage latest.yml always and the channel manifest on beta',
+  'verify-published checks the download digest, size and latest.yml version',
+  'verify-published checks the channel manifest version on prereleases',
+  'verify-published requires a Valid signature only when signing was on',
+  'verify-published installs silently and waits for the exe',
+  'verify-published boots the published copy',
+  'promote-release publishes via gh release edit without touching prerelease',
+  'release probes carry timeouts inside their job budgets',
+  'signing enabler emits timestamped azureSignOptions'
+]
+
+const complete = reportChecks(results, { expected: [...EXPECTED_CHECKS, ...RELEASE_CHECKS], subject: 'workflow checks' })
 process.exit(complete ? 0 : 1)

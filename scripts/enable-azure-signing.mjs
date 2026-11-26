@@ -50,6 +50,17 @@ if (missing.length > 0) {
   process.exit(1)
 }
 
+// Endpoint must be the regional Trusted Signing URI (e.g.
+// https://eus.codesigning.azure.net/). A bare hostname or wrong service
+// fails deep inside the signing module, so refuse it here with the fix.
+if (!/^https:\/\/[^/]+\.codesigning\.azure\.net\/?$/.test(AZURE_SIGNING_ENDPOINT)) {
+  console.error(
+    `AZURE_SIGNING_ENDPOINT looks wrong: ${JSON.stringify(AZURE_SIGNING_ENDPOINT)} — ` +
+      'expected the regional Trusted Signing URI, e.g. https://eus.codesigning.azure.net/.'
+  )
+  process.exit(1)
+}
+
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
 pkg.build ??= {}
 pkg.build.win ??= {}
@@ -57,7 +68,14 @@ pkg.build.win.azureSignOptions = {
   publisherName: AZURE_PUBLISHER_NAME,
   endpoint: AZURE_SIGNING_ENDPOINT,
   certificateProfileName: AZURE_SIGNING_PROFILE,
-  codeSigningAccountName: AZURE_SIGNING_ACCOUNT
+  codeSigningAccountName: AZURE_SIGNING_ACCOUNT,
+  // Signatures without RFC 3161 timestamping expire with the certificate
+  // (in practice ~3 days of validity). The Microsoft timestamp server keeps
+  // a signed installer verifiable after the cert rotates, so this is not
+  // optional even though electron-builder marks it as such.
+  fileDigest: 'SHA256',
+  timestampDigest: 'SHA256',
+  timestampRfc3161: 'http://timestamp.acs.microsoft.com'
 }
 fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`)
 console.log(
