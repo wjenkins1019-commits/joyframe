@@ -208,7 +208,12 @@ jobs:
     needs: [windows-installer]
     timeout-minutes: 15
     permissions:
-      contents: read
+      # Draft releases are invisible to a read-only token through the
+      # `releases/tags/*` endpoint, so a new prerelease tag (which has only a
+      # draft) 404s there while a re-run on an already-published stable tag
+      # succeeds. Write is the least privilege that can read the draft this
+      # job must prove before promote-release makes it public.
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -236,8 +241,9 @@ jobs:
           $release = $null
           for ($i = 1; $i -le 12; $i++) {
             try {
-              $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '{assets: [.assets[] | {name, label, digest, size, url: .browser_download_url}]}' | ConvertFrom-Json
+              $release = gh api "repos/${{ github.repository }}/releases?per_page=100" --jq "[.[] | select(.tag_name == `"$tag`")][0] | {id, tag_name, draft, prerelease, assets: [.assets[] | {name, label, digest, size}]}" | ConvertFrom-Json
               if ($release -and $release.assets -and $release.assets.Count -gt 0) { break }
+              Write-Host "attempt ${i}: release $tag not staged with assets yet"
             } catch {
               Write-Host "attempt ${i}: release not ready yet ($($_.Exception.Message))"
             }
