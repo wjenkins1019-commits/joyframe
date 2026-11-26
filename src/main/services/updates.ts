@@ -1,6 +1,14 @@
 import { execFile } from 'node:child_process'
 import { app, dialog } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import updaterPkg from 'electron-updater'
+
+// NOTE: never `import { autoUpdater }` by name. electron-updater's compiled
+// entry exposes its exports through getters that defeat Node's
+// cjs-module-lexer, so a named ESM import throws `SyntaxError: Named export
+// 'autoUpdater' not found` at load time in the packaged app (Vite's dev
+// interop hides this). The default import always works; the `autoUpdater`
+// property itself is read lazily inside gateAndCheck, i.e. only in the
+// packaged app where Electron's `app` exists to back it.
 
 /**
  * In-app auto-updates via electron-updater, fed by the GitHub release that
@@ -43,6 +51,8 @@ async function gateAndCheck(log: (message: string) => void): Promise<void> {
     log('updates: skipping check — running exe is not Authenticode-signed; updates enable automatically on signed builds')
     return
   }
+
+  const { autoUpdater } = updaterPkg
 
   autoUpdater.logger = {
     info: (message: string) => log(`updates: ${message}`),
