@@ -139,7 +139,7 @@ jobs:
               $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '{assets: [.assets[] | {name, label, digest, size, url: .browser_download_url}]}' | ConvertFrom-Json
               if ($release -and $release.assets -and $release.assets.Count -gt 0) { break }
             } catch {
-              Write-Host "attempt $i: release not ready yet ($($_.Exception.Message))"
+              Write-Host "attempt ${i}: release not ready yet ($($_.Exception.Message))"
             }
             Start-Sleep -Seconds 5
           }
