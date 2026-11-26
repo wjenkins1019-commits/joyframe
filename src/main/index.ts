@@ -12,6 +12,7 @@ import { Launcher } from './services/launcher.ts'
 import { closeInterruptedSession, reconcileOpenSessions } from './services/sessions.ts'
 import { getSettings, migrateSecrets } from './services/settings.ts'
 import { configureSecrets } from './services/secrets.ts'
+import { startUpdateChecks } from './services/updates.ts'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -117,6 +118,11 @@ async function bootstrap(): Promise<void> {
   }
 
   createWindow()
+
+  // Check for updates in the background on packaged, signed builds. Returns
+  // immediately in dev and on unsigned builds; failures are logged, never
+  // shown, so updates can never interrupt startup.
+  startUpdateChecks(logToFile)
 
   // Rotate an automatic backup on startup once the library has content.
   try {

@@ -1,10 +1,11 @@
-# Packages the Windows installer and publishes it as a release asset, so the
-# download button on the repository always points at a build that passed the
-# icon check. Manual runs publish the current package version; a v* tag does
-# the same for that tag. A second job then downloads that published asset,
-# checks its bytes against the release digest, installs it silently and boots
-# the installed copy — so a corrupt upload or an installer-only regression
-# fails the workflow instead of shipping quietly.
+# Packages the Windows installer and stages it on a *draft* release, so the
+# download button never points at an unproven build. Manual runs stage the
+# current package version; a v* tag does the same for that tag. A second
+# job then downloads that draft asset, checks its bytes against the release
+# digest, installs it silently and boots the installed copy — and only when
+# that proof passes does a third job flip the draft to published. A corrupt
+# upload or installer-only regression therefore fails the workflow while
+# the release is still invisible, instead of shipping quietly.
 #
 # The installer is signed with Azure Artifact Signing only when the Azure
 # secrets exist (see the "Enable Azure signing" step). With no secrets the
@@ -40,6 +41,27 @@ jobs:
         with:
           node-version: '26'
           cache: npm
+
+      # Fail-fast integrity gate: on a tag push the tag must be exactly
+      # v<package.json version>, otherwise the run would publish bytes built
+      # from a mismatched version under the tag's name. Runs before any
+      # build work so a bad tag dies in seconds. Manual dispatches carry no
+      # tag, so they only report the version they are about to stage.
+      - name: Guard tag matches package version
+        shell: bash
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          ref="${{ github.ref }}"
+          if [[ "$ref" == refs/tags/* ]]; then
+            tag="${ref#refs/tags/}"
+            if [[ "$tag" != "v$pkg" ]]; then
+              echo "::error::Tag $tag does not match package.json version $pkg — refusing to publish mismatched bytes. Move the tag or bump the version."
+              exit 1
+            fi
+            echo "tag $tag matches package version $pkg"
+          else
+            echo "no tag ($ref); staging package version $pkg as a draft"
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -84,21 +106,35 @@ jobs:
           path: release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
           if-no-files-found: error
 
-      - name: Publish GitHub release
+      # Staged as a draft, never public yet: `draft: true` must stay set on
+      # every run (including re-runs on an existing tag) so new bytes always
+      # land invisible. The promote-release job below is the only step that
+      # makes a release public, and it runs only after verify-published.
+      # Promotion uses `gh release edit`, not this action: the action cannot
+      # flip a draft to published (it would create a second release).
+      # `latest.yml` is the update manifest electron-updater reads: without
+      # it the installed app can never discover this release, so it ships as
+      # a required asset next to the installer (and the unmatched-files flag
+      # fails the run if the build did not emit it).
+      - name: Stage GitHub release as draft
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.pkg.outputs.version }}
           name: JOYFRAME v${{ steps.pkg.outputs.version }}
-          files: release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
+          files: |
+            release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
+            release/latest.yml
           fail_on_unmatched_files: true
           generate_release_notes: true
+          draft: true
 
-  # Proves the bytes users download are the ones the release published. The
+  # Proves the bytes users will download are the ones the draft staged. The
   # installer job above tests the local package; this job tests the upload:
-  # it resolves the release by tag, downloads the exe GitHub serves, fails
-  # when its size or SHA-256 differs from the release digest, installs it the
-  # way a release machine does (`/allusers /S`), then runs the installed boot
-  # probe. It runs only the boot probe (`verify-installed.mjs`) rather than
+  # it resolves the draft release by tag, downloads the exe GitHub serves
+  # (drafts are readable with the job token), fails when its size or SHA-256
+  # differs from the release digest, installs it the way a release machine
+  # does (`/allusers /S`), then runs the installed boot probe. It runs only
+  # the boot probe (`verify-installed.mjs`) rather than
   # `npm run verify:installed`, because there is no local
   # release/win-unpacked here to compare against — the digest check above is
   # the byte comparison for this job.
@@ -171,6 +207,15 @@ jobs:
           Write-Host "published installer matches its release digest"
           echo "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
 
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern 'latest.yml' --dir published --clobber
+          $manifest = Get-ChildItem published -Filter 'latest.yml' | Select-Object -First 1
+          if (-not $manifest) { throw 'release holds no latest.yml — auto-update has nothing to read' }
+          $manifestText = Get-Content $manifest.FullName -Raw
+          if ($manifestText -notmatch '(?m)^version:\s*(\S+)') { throw 'latest.yml has no version line' }
+          $manifestVersion = $Matches[1]
+          if ($manifestVersion -ne $version) { throw "latest.yml advertises $manifestVersion, expected $version" }
+          Write-Host "latest.yml advertises version $manifestVersion"
+
       - name: Install it silently, the way a release machine does
         id: install
         shell: pwsh
@@ -214,3 +259,28 @@ jobs:
           # Both paths live under dot-directories, which upload-artifact skips
           # unless this is on.
           include-hidden-files: true
+
+  # Makes the draft public — and only runs when verify-published passed, so
+  # a bad build can fail the workflow while still invisible. `needs` gives
+  # the ordering: a failed or skipped verify means this job never runs.
+  promote-release:
+    name: Promote verified draft to published
+    runs-on: ubuntu-latest
+    needs: [verify-published]
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish the verified draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
+          # verify-published passed, so the draft at this tag holds the proven
+          # bytes — flipping it public is the last step, never the first.
+          gh release edit "$tag" --repo "${{ github.repository }}" --draft=false
+          echo "release $tag is now published"
