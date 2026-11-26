@@ -19,6 +19,16 @@
 # (regional, e.g. eus.codesigning.azure.net/), AZURE_SIGNING_ACCOUNT,
 # AZURE_SIGNING_PROFILE, AZURE_PUBLISHER_NAME (must exactly match the
 # certificate's CN).
+#
+# Beta channel: a package version with a semver prerelease suffix (e.g.
+# `1.0.2-beta.0`, tag `v1.0.2-beta.0`) is staged as a GitHub *prerelease*
+# carrying both `latest.yml` and a `<channel>.yml` copy (`beta.yml`).
+# electron-updater on a prerelease install opts into prereleases and reads
+# the channel manifest from the newest matching prerelease tag, while stable
+# installs resolve through GitHub's `releases/latest` endpoint — which
+# ignores prereleases — so beta builds prove the updater on real installs
+# without stable users ever seeing them. The tag guard below applies
+# unchanged: the tag must still be exactly `v<package version>`.
 name: release
 
 on:
@@ -94,10 +104,42 @@ jobs:
       - name: Verify installer
         run: npm run verify:installer
 
+      # Derives the release kind from the version string: a hyphen means a
+      # semver prerelease, and its first identifier is the update channel
+      # (`1.0.2-beta.0` → channel `beta`, manifest `beta.yml`) — the same rule
+      # electron-updater applies when the installed app picks its channel
+      # file, so the workflow can never stage a manifest the updater will not
+      # read. Stable versions stay on `latest.yml`, exactly as before.
       - name: Read package version
         id: pkg
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            channel="${version#*-}"
+            channel="${channel%%.*}"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            channel="latest"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "manifest=$channel.yml" >> "$GITHUB_OUTPUT"
+          echo "version $version → channel $channel"
+
+      # The builder always emits `latest.yml`; a prerelease additionally
+      # publishes the channel manifest (`beta.yml`) — a byte copy, so both
+      # manifests advertise the same proven build. The beta updater reads the
+      # channel file first and only falls back to `latest.yml`, so the copy
+      # is what makes the channel explicit instead of relying on the 404
+      # fallback on every check.
+      - name: Prepare beta channel manifest
+        if: steps.pkg.outputs.prerelease == 'true'
+        shell: bash
+        run: |
+          cp "release/latest.yml" "release/${{ steps.pkg.outputs.manifest }}"
+          echo "channel manifest release/${{ steps.pkg.outputs.manifest }} prepared"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -115,8 +157,14 @@ jobs:
       # `latest.yml` is the update manifest electron-updater reads: without
       # it the installed app can never discover this release, so it ships as
       # a required asset next to the installer (and the unmatched-files flag
-      # fails the run if the build did not emit it).
-      - name: Stage GitHub release as draft
+      # fails the run if the build did not emit it). A prerelease version
+      # additionally stages the channel manifest (`beta.yml`) and is marked
+      # `prerelease: true`: GitHub's `releases/latest` endpoint ignores
+      # prereleases, so stable updaters never see these builds, while
+      # prerelease installs read the channel file and prove the update path
+      # before stable ships.
+      - name: Stage GitHub release as draft (stable)
+        if: steps.pkg.outputs.prerelease == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.pkg.outputs.version }}
@@ -127,6 +175,22 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: true
+          prerelease: false
+
+      - name: Stage GitHub release as draft (beta)
+        if: steps.pkg.outputs.prerelease == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.pkg.outputs.version }}
+          name: JOYFRAME v${{ steps.pkg.outputs.version }}
+          files: |
+            release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
+            release/latest.yml
+            release/${{ steps.pkg.outputs.manifest }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: true
+          prerelease: true
 
   # Proves the bytes users will download are the ones the draft staged. The
   # installer job above tests the local package; this job tests the upload:
@@ -207,7 +271,7 @@ jobs:
           Write-Host "published installer matches its release digest"
           echo "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
 
-          gh release download "$tag" --repo "${{ github.repository }}" --pattern 'latest.yml' --dir published --clobber
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern '*.yml' --dir published --clobber
           $manifest = Get-ChildItem published -Filter 'latest.yml' | Select-Object -First 1
           if (-not $manifest) { throw 'release holds no latest.yml — auto-update has nothing to read' }
           $manifestText = Get-Content $manifest.FullName -Raw
@@ -215,6 +279,22 @@ jobs:
           $manifestVersion = $Matches[1]
           if ($manifestVersion -ne $version) { throw "latest.yml advertises $manifestVersion, expected $version" }
           Write-Host "latest.yml advertises version $manifestVersion"
+
+          # Prereleases must carry the channel manifest the beta updater reads
+          # first (`beta.yml` for `1.0.2-beta.0`): without it every beta check
+          # still resolves through the 404 fallback, and a missing file here
+          # means the draft staged the wrong assets. The channel is the first
+          # prerelease identifier — the same rule electron-updater applies.
+          if ($version -like '*-*') {
+            $channel = (($version -split '-', 2)[1] -split '\.')[0]
+            $channelFile = "$channel.yml"
+            $channelManifest = Get-ChildItem published -Filter $channelFile | Select-Object -First 1
+            if (-not $channelManifest) { throw "prerelease $version holds no $channelFile — the beta channel has nothing to read" }
+            $channelText = Get-Content $channelManifest.FullName -Raw
+            if ($channelText -notmatch '(?m)^version:\s*(\S+)') { throw "$channelFile has no version line" }
+            if ($Matches[1] -ne $version) { throw "$channelFile advertises $($Matches[1]), expected $version" }
+            Write-Host "$channelFile advertises version $version"
+          }
 
       - name: Install it silently, the way a release machine does
         id: install
@@ -282,5 +362,7 @@ jobs:
           tag="v$version"
           # verify-published passed, so the draft at this tag holds the proven
           # bytes — flipping it public is the last step, never the first.
+          # `--draft=false` leaves the prerelease flag untouched, so a beta
+          # stays a prerelease (invisible to stable updaters) once published.
           gh release edit "$tag" --repo "${{ github.repository }}" --draft=false
           echo "release $tag is now published"

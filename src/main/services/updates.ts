@@ -28,6 +28,15 @@ import updaterPkg from 'electron-updater'
  * publisher as the installed app before it is allowed to run. Never set it
  * to false to "make updates work" on unsigned builds — that would let any
  * network attacker serve the updater a malicious installer.
+ *
+ * Beta channel: a prerelease install (semver with a hyphen, e.g.
+ * `1.0.2-beta.0`) follows the `beta` update channel, while stable installs
+ * stay on `latest`. The release workflow stages prerelease versions as
+ * GitHub prereleases carrying a `beta.yml` manifest, so stable updaters —
+ * which resolve through GitHub's `releases/latest` endpoint that ignores
+ * prereleases — never see beta builds. Beta installs therefore prove the
+ * download-to-restart path on real machines before a stable user is offered
+ * anything.
  */
 export function startUpdateChecks(log: (message: string) => void): void {
   if (!app.isPackaged) return
@@ -53,6 +62,14 @@ async function gateAndCheck(log: (message: string) => void): Promise<void> {
   }
 
   const { autoUpdater } = updaterPkg
+
+  // Pin the channel policy explicitly instead of relying on electron-updater's
+  // default (allowPrerelease follows the running version's prerelease flag).
+  // The default is correct today — beta installs opt into prereleases, stable
+  // installs do not — but an explicit assignment means a library upgrade can
+  // never silently move stable users onto prereleases or strand beta installs.
+  autoUpdater.allowPrerelease = app.getVersion().includes('-')
+  log(`updates: channel policy — ${autoUpdater.allowPrerelease ? 'beta (this is a prerelease install)' : 'stable'}; checking for updates`)
 
   autoUpdater.logger = {
     info: (message: string) => log(`updates: ${message}`),
