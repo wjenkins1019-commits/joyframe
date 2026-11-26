@@ -34,6 +34,7 @@
     "verify:intro-pad": "node scripts/verify-intro-pad.ts",
     "verify:intro-name-pad": "node scripts/verify-intro-name-pad.ts",
     "verify:installer": "node scripts/check-installer.mjs",
+    "verify:signature": "node scripts/verify-signature.mjs",
     "verify:installed-build": "node scripts/verify-installed-build.mjs",
     "verify:installed": "node scripts/verify-installed-build.mjs && node scripts/verify-installed.mjs",
     "verify:freshness": "node scripts/check-packaged-fresh.mjs",

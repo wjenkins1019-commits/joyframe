@@ -302,6 +302,28 @@ jobs:
             Write-Host "$channelFile advertises version $version"
           }
 
+      # Signed download-to-restart needs a Valid Authenticode signature on both
+      # the downloaded installer and the installed exe: electron-updater refuses
+      # unsigned downloads and updates.ts skips the check on unsigned installs.
+      # Unsigned betas stay green here (log + pass); when the Azure secrets are
+      # present the build was supposed to sign, so --require-signed fails loudly
+      # instead of letting an unsigned "signed" beta through to promote.
+      - name: Verify installer signature (signed path when enabled)
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $installer = '${{ steps.download.outputs.installer }}'
+          if (-not $installer -or -not (Test-Path $installer)) {
+            $installer = (Get-ChildItem published -Filter '*.exe' | Select-Object -First 1).FullName
+          }
+          if (-not $installer) { throw 'published/ holds no installer — the download step produced none' }
+          $require = $env:AZURE_TENANT_ID -and $env:AZURE_CLIENT_ID -and $env:AZURE_CLIENT_SECRET
+          if ($require) { node scripts/verify-signature.mjs "$installer" --require-signed }
+          else { node scripts/verify-signature.mjs "$installer" }
+
       - name: Install it silently, the way a release machine does
         id: install
         shell: pwsh
@@ -323,6 +345,18 @@ jobs:
           while (-not (Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
           if (-not (Test-Path $exe)) { throw "the installer left no $exe" }
           Write-Host "installed $exe"
+
+      - name: Verify installed exe signature (signed path when enabled)
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $exe = 'C:\Program Files\JOYFRAME\JOYFRAME.exe'
+          $require = $env:AZURE_TENANT_ID -and $env:AZURE_CLIENT_ID -and $env:AZURE_CLIENT_SECRET
+          if ($require) { node scripts/verify-signature.mjs "$exe" --require-signed }
+          else { node scripts/verify-signature.mjs "$exe" }
 
       # Byte equality is already proven by the digest check above; this is the
       # boot half: the installed copy must show its ident, skip it on a key
