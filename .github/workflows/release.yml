@@ -1,7 +1,23 @@
 # Packages the Windows installer and publishes it as a release asset, so the
 # download button on the repository always points at a build that passed the
 # icon check. Manual runs publish the current package version; a v* tag does
-# the same for that tag.
+# the same for that tag. A second job then downloads that published asset,
+# checks its bytes against the release digest, installs it silently and boots
+# the installed copy — so a corrupt upload or an installer-only regression
+# fails the workflow instead of shipping quietly.
+#
+# The installer is signed with Azure Artifact Signing only when the Azure
+# secrets exist (see the "Enable Azure signing" step). With no secrets the
+# step exits quietly and the build stays unsigned, so forks, local runs and
+# the period before the signing account exists all keep working. Nothing
+# here buys or provisions anything: creating the Trusted Signing account,
+# certificate profile and app registration, then adding these repo secrets,
+# is what turns signing on:
+# AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET (Entra app +
+# "Trusted Signing Certificate Profile Signer" role), AZURE_SIGNING_ENDPOINT
+# (regional, e.g. eus.codesigning.azure.net/), AZURE_SIGNING_ACCOUNT,
+# AZURE_SIGNING_PROFILE, AZURE_PUBLISHER_NAME (must exactly match the
+# certificate's CN).
 name: release
 
 on:
@@ -28,8 +44,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # No `if:` gate: the script itself enables signing only when the
+      # Azure secrets are present and fails loudly on a half-configured
+      # setup, so an unsigned build never pretends to be signed.
+      - name: Enable Azure signing when configured
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
+        run: node scripts/enable-azure-signing.mjs
+
       - name: Build installer
         shell: bash
+        env:
+          # Consumed by electron-builder's Azure signing backend only when
+          # the step above enabled it; harmlessly ignored for unsigned builds.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: npm run dist > dist.log 2>&1
 
       - name: Verify installer
@@ -55,3 +92,125 @@ jobs:
           files: release/JOYFRAME Setup ${{ steps.pkg.outputs.version }}.exe
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # Proves the bytes users download are the ones the release published. The
+  # installer job above tests the local package; this job tests the upload:
+  # it resolves the release by tag, downloads the exe GitHub serves, fails
+  # when its size or SHA-256 differs from the release digest, installs it the
+  # way a release machine does (`/allusers /S`), then runs the installed boot
+  # probe. It runs only the boot probe (`verify-installed.mjs`) rather than
+  # `npm run verify:installed`, because there is no local
+  # release/win-unpacked here to compare against — the digest check above is
+  # the byte comparison for this job.
+  verify-published:
+    name: Published installer installs and boots
+    runs-on: windows-latest
+    needs: [windows-installer]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # The boot probe imports only `node:` modules and sibling helpers, so
+      # no `npm ci` (and no Electron download) is needed to run it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+
+      - name: Read package version
+        id: pkg
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Download the published installer and check its digest
+        id: download
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.pkg.outputs.version }}'
+          $tag = "v$version"
+          Write-Host "resolving release $tag"
+
+          $release = $null
+          for ($i = 1; $i -le 12; $i++) {
+            try {
+              $release = gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '{assets: [.assets[] | {name, label, digest, size, url: .browser_download_url}]}' | ConvertFrom-Json
+              if ($release -and $release.assets -and $release.assets.Count -gt 0) { break }
+            } catch {
+              Write-Host "attempt $i: release not ready yet ($($_.Exception.Message))"
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $release -or -not $release.assets -or $release.assets.Count -eq 0) {
+            throw "release $tag has no assets — the publish step uploaded none"
+          }
+
+          $asset = $release.assets | Where-Object { $_.name -like 'JOYFRAME.Setup.*.exe' -or $_.label -like 'JOYFRAME Setup *.exe' } | Select-Object -First 1
+          if (-not $asset) { throw "release $tag holds no JOYFRAME Setup exe (saw: $($release.assets.name -join ', '))" }
+          if (-not $asset.digest) { throw "release asset $($asset.name) carries no digest to check against" }
+          $expectedHash = ($asset.digest -replace '^sha256:', '').ToUpperInvariant()
+          $expectedSize = [long]$asset.size
+          Write-Host "expecting $($asset.name) ($expectedSize bytes, sha256 $expectedHash)"
+
+          New-Item -ItemType Directory -Force published | Out-Null
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern '*.exe' --dir published --clobber
+          $installer = Get-ChildItem published -Filter 'JOYFRAME Setup *.exe' | Select-Object -First 1
+          if (-not $installer) { $installer = Get-ChildItem published -Filter '*.exe' | Select-Object -First 1 }
+          if (-not $installer) { throw 'the release download left no exe in published/' }
+          Write-Host "downloaded $($installer.Name) ($($installer.Length) bytes)"
+          if ($installer.Length -ne $expectedSize) {
+            throw "size mismatch: downloaded $($installer.Length) bytes, release says $expectedSize"
+          }
+          $actualHash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+          Write-Host "sha256 $actualHash"
+          if ($actualHash -ne $expectedHash) {
+            throw "hash mismatch: downloaded $actualHash, release digest $expectedHash"
+          }
+          Write-Host "published installer matches its release digest"
+          echo "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Install it silently, the way a release machine does
+        id: install
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $installer = '${{ steps.download.outputs.installer }}'
+          if (-not $installer -or -not (Test-Path $installer)) {
+            $installer = (Get-ChildItem published -Filter '*.exe' | Select-Object -First 1).FullName
+          }
+          if (-not $installer) { throw 'published/ holds no installer — the download step produced none' }
+          Write-Host "installing $installer"
+          $result = Start-Process -FilePath $installer -ArgumentList '/allusers', '/S' -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "$installer exited $($result.ExitCode)" }
+          # A silent assisted install can still honour its run-after-finish box.
+          # Stop that copy so the probe's own launch owns its profile.
+          Get-Process JOYFRAME -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = 'C:\Program Files\JOYFRAME\JOYFRAME.exe'
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if (-not (Test-Path $exe)) { throw "the installer left no $exe" }
+          Write-Host "installed $exe"
+
+      # Byte equality is already proven by the digest check above; this is the
+      # boot half: the installed copy must show its ident, skip it on a key
+      # press without click-through, and honour `introMode: off` on a cold
+      # first launch.
+      - name: Installed app — published copy boots
+        id: installed
+        timeout-minutes: 5
+        run: node scripts/verify-installed.mjs
+
+      - name: Upload published-copy artifacts
+        if: failure() && steps.installed.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-copy-artifacts-attempt-${{ github.run_attempt }}
+          path: |
+            .verify-logs/verify-installed.log
+            .verify-intro
+          if-no-files-found: warn
+          # Both paths live under dot-directories, which upload-artifact skips
+          # unless this is on.
+          include-hidden-files: true
