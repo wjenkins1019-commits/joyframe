@@ -112,6 +112,8 @@ const stepPaths = (step) =>
 const sameSet = (actual, expected) =>
   actual.length === expected.length && expected.every((entry) => actual.includes(entry))
 const condition = (step) => String(step.if ?? '')
+/** A step's shell text, whatever runner it uses. */
+const runText = (step) => String(step?.run ?? '')
 /** The artifact's download name; the step's own `name` is only the job-log label. */
 const artifactName = (step) => String(step.with?.name ?? '')
 const uploadsHidden = (paths) =>
@@ -389,7 +391,6 @@ if (release) {
   const rVerifySteps = rVerify.steps ?? []
   const rPromoteSteps = rPromote.steps ?? []
   const needsOf = (job) => [].concat(job?.needs ?? [])
-  const runText = (step) => String(step?.run ?? '')
 
   check(
     'release jobs are ordered windows-installer → verify-published → promote-release',
@@ -559,6 +560,88 @@ if (release) {
   )
 }
 
+// ---- rollback.yml: yank a bad published release, prove the fallback ----
+// A bad build that stays on `releases/latest` keeps reaching every stable
+// install that checks. The rollback workflow converts it back to a draft and
+// polls the same endpoint updaters resolve through until the prior stable
+// serves again. These parse it so a dropped guard (identical tags, a draft
+// or prerelease prior, a republish instead of a yank) fails locally.
+const ROLLBACK_WORKFLOW = path.join('.github', 'workflows', 'rollback.yml')
+let rollback = null
+try {
+  rollback = YAML.load(fs.readFileSync(ROLLBACK_WORKFLOW, 'utf8'))
+} catch (error) {
+  check('rollback workflow parses', false, String(error.message))
+}
+if (rollback) {
+  const rbOn = rollback.on ?? rollback[true] ?? {}
+  const rbInputs = rbOn.workflow_dispatch?.inputs ?? {}
+  check(
+    'rollback requires bad_tag and prior_tag inputs',
+    rbInputs.bad_tag?.required === true && rbInputs.prior_tag?.required === true,
+    `inputs: ${Object.keys(rbInputs).join(', ') || '(none)'}`
+  )
+  check(
+    'rollback keeps contents:write to edit releases',
+    (rollback.permissions?.contents ?? rollback.permissions) === 'write',
+    `permissions ${JSON.stringify(rollback.permissions)}`
+  )
+  const rbYank = rollback.jobs?.yank ?? {}
+  const rbVerify = rollback.jobs?.['verify-latest'] ?? {}
+  check(
+    'rollback verifies the prior stable before yanking',
+    [].concat(rbVerify?.needs ?? []).includes('yank'),
+    `verify-latest needs ${[].concat(rbVerify?.needs ?? []).join(',') || '(none)'}`
+  )
+  const rbText = [...(rbYank.steps ?? []), ...(rbVerify.steps ?? [])].map(runText).join('\n')
+  check(
+    'rollback refuses identical tags and requires a published stable prior',
+    rbText.includes('bad_tag') &&
+      rbText.includes('prior_tag') &&
+      rbText.includes('prerelease') &&
+      rbText.includes('draft') &&
+      rbText.includes('latest.yml'),
+    rbText ? `${rbText.length} chars of run text` : 'no run text'
+  )
+  check(
+    'rollback yanks with gh release edit --draft without republishing',
+    rbText.includes('gh release edit') &&
+      rbText.includes('--draft') &&
+      !rbText.includes('--draft=false') &&
+      !rbText.includes('--prerelease'),
+    'yank flips draft on only; the prerelease flag keeps its value'
+  )
+  check(
+    'rollback verifies releases/latest resolves to the prior stable',
+    rbText.includes('releases/latest') && rbText.includes('prior'),
+    rbText.includes('releases/latest') ? 'polls the endpoint updaters resolve through' : 'no latest check'
+  )
+  const rbBudget = (job) => job?.['timeout-minutes'] ?? 0
+  const rbSteps = [...(rbYank.steps ?? []), ...(rbVerify.steps ?? [])]
+  const rbTimeouts = rbSteps.map((step) => step['timeout-minutes'])
+  check(
+    'rollback steps fit inside their job budgets',
+    rbBudget(rbYank) > 0 &&
+      rbBudget(rbVerify) > 0 &&
+      rbTimeouts.every((minutes) => minutes === undefined || (Number.isInteger(minutes) && minutes > 0)) &&
+      rbSteps.every((step, index) => {
+        const budget = index < (rbYank.steps ?? []).length ? rbBudget(rbYank) : rbBudget(rbVerify)
+        return step['timeout-minutes'] === undefined || step['timeout-minutes'] < budget
+      }),
+    `yank ${rbBudget(rbYank)}m, verify-latest ${rbBudget(rbVerify)}m`
+  )
+}
+
+const ROLLBACK_CHECKS = [
+  'rollback requires bad_tag and prior_tag inputs',
+  'rollback keeps contents:write to edit releases',
+  'rollback verifies the prior stable before yanking',
+  'rollback refuses identical tags and requires a published stable prior',
+  'rollback yanks with gh release edit --draft without republishing',
+  'rollback verifies releases/latest resolves to the prior stable',
+  'rollback steps fit inside their job budgets'
+]
+
 const RELEASE_CHECKS = [
   'release jobs are ordered windows-installer → verify-published → promote-release',
   'release keeps contents:write so draft lookups work',
@@ -578,5 +661,5 @@ const RELEASE_CHECKS = [
   'signing enabler emits timestamped azureSignOptions'
 ]
 
-const complete = reportChecks(results, { expected: [...EXPECTED_CHECKS, ...RELEASE_CHECKS], subject: 'workflow checks' })
+const complete = reportChecks(results, { expected: [...EXPECTED_CHECKS, ...RELEASE_CHECKS, ...ROLLBACK_CHECKS], subject: 'workflow checks' })
 process.exit(complete ? 0 : 1)

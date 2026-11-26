@@ -1,0 +1,134 @@
+# Yank and rollback for a bad published release.
+#
+# When a published build turns out bad, two things have to happen in order:
+# the bad release stops being served, and updaters resolve to the prior good
+# stable again. GitHub's `releases/latest` endpoint — the same one stable
+# installs resolve through — serves the newest published non-prerelease, so
+# converting the bad release back to a *draft* is the yank: it disappears
+# from `latest` without deleting any bytes, and the prior stable (which never
+# unpublished) is served again with no re-upload. electron-updater never
+# downgrades an already-updated install, so machines that already took the
+# bad build are repaired by the next hotfix release, not by this workflow —
+# this workflow stops the bleeding and proves what stable users now see.
+#
+# Run from the repo page (Actions → rollback → Run workflow) or:
+#
+#   gh workflow run rollback.yml -f bad_tag=v1.0.3 -f prior_tag=v1.0.2
+#
+# `bad_tag` is the published tag to pull (stable or beta). `prior_tag` is the
+# stable tag users must resolve to afterwards; it must already be published,
+# must not be a prerelease (prereleases never serve `latest`), and must carry
+# `latest.yml`. The workflow refuses anything else instead of yanking first
+# and asking questions later. The yank itself only ever flips draft on — the
+# prerelease flag is left untouched, so a yanked beta stays a beta — and the
+# verify job polls `releases/latest` until it serves the prior stable.
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      bad_tag:
+        description: 'Published tag to yank (e.g. v1.0.3). Converted back to a draft so updaters stop seeing it.'
+        required: true
+      prior_tag:
+        description: 'Prior stable tag users must resolve to (e.g. v1.0.2). Must already be published with latest.yml.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  yank:
+    name: Yank the bad release back to draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Fail-fast integrity gate: identical tags, a missing/draft/prerelease
+      # prior, or a prior without latest.yml all fail here, before anything is
+      # yanked. A prior that cannot serve `releases/latest` would leave updaters
+      # with nothing after the yank, so the check runs first by design.
+      - name: Validate inputs and release state
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bad="${{ inputs.bad_tag }}"
+          prior="${{ inputs.prior_tag }}"
+          repo="${{ github.repository }}"
+          if [[ "$bad" == "$prior" ]]; then
+            echo "::error::bad_tag and prior_tag are both $bad — refusing to yank the release users must fall back to."
+            exit 1
+          fi
+          prior_json="$(gh api "repos/$repo/releases/tags/$prior")" || {
+            echo "::error::prior tag $prior has no release — publish the fallback first, then yank."
+            exit 1
+          }
+          if [[ "$(echo "$prior_json" | jq -r .draft)" != "false" ]]; then
+            echo "::error::prior tag $prior is a draft — publish it first so updaters have somewhere to land."
+            exit 1
+          fi
+          if [[ "$(echo "$prior_json" | jq -r .prerelease)" != "false" ]]; then
+            echo "::error::prior tag $prior is a prerelease — releases/latest ignores prereleases, so pick the stable users must resolve to."
+            exit 1
+          fi
+          if ! echo "$prior_json" | jq -e '.assets[] | select(.name == "latest.yml")' > /dev/null; then
+            echo "::error::prior tag $prior carries no latest.yml — the updater would have nothing to read."
+            exit 1
+          fi
+          bad_json="$(gh api "repos/$repo/releases/tags/$bad")" || {
+            echo "::error::bad tag $bad has no release — nothing to yank."
+            exit 1
+          }
+          if [[ "$(echo "$bad_json" | jq -r .draft)" == "true" ]]; then
+            echo "$bad is already a draft — yank is a no-op, verify will still prove what latest serves."
+            echo "already_draft=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_draft=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "yanking $bad; updaters must fall back to $prior"
+
+      # Draft is the only flag this step ever sets: the bytes stay on the
+      # release for forensics, and the prerelease flag keeps its value, so a
+      # yanked beta never becomes a stable and a yanked stable never becomes
+      # published again from here. Re-publishing is promote-release's job.
+      - name: Yank the bad release to draft
+        if: steps.validate.outputs.already_draft != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ inputs.bad_tag }}" --repo "${{ github.repository }}" --draft
+          echo "release ${{ inputs.bad_tag }} is now a draft"
+
+  # Proves what stable users actually get: polls the same endpoint their
+  # updaters resolve through until it serves the prior tag, then names the
+  # manifest it carries. A yank that GitHub has not applied yet fails here
+  # instead of reading as done.
+  verify-latest:
+    name: Verify updaters resolve to the prior stable
+    runs-on: ubuntu-latest
+    needs: [yank]
+    timeout-minutes: 10
+    steps:
+      - name: Poll releases/latest until it serves the prior stable
+        timeout-minutes: 8
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prior="${{ inputs.prior_tag }}"
+          repo="${{ github.repository }}"
+          deadline=$(($(date +%s) + 300))
+          while true; do
+            tag="$(gh api "repos/$repo/releases/latest" --jq .tag_name)"
+            echo "releases/latest serves $tag (want $prior)"
+            if [[ "$tag" == "$prior" ]]; then break; fi
+            if [[ "$(date +%s)" -ge "$deadline" ]]; then
+              echo "::error::releases/latest still serves $tag after 5 minutes — the yank did not take."
+              exit 1
+            fi
+            sleep 15
+          done
+          gh api "repos/$repo/releases/tags/$prior" --jq '.assets[] | "\(.name) (\(.size) bytes)"'
+          echo "rollback complete: updaters resolve to $prior"
