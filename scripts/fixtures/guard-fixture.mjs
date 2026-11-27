@@ -259,7 +259,8 @@ if (mode === 'cdp-close-routine') {
   const thrown = await pendingCall
   const reason = thrown?.message ?? 'none'
   console.log(`probe closed mid-command: ${reason}`)
-  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+  // The rejection names the close the probe asked for, not a lost connection.
+  process.exit(reason === 'the probe closed the session itself' ? 0 : 1)
 }
 
 if (mode === 'cdp-close-expected') {
@@ -273,7 +274,8 @@ if (mode === 'cdp-close-expected') {
   const thrown = await pendingCall
   const reason = thrown?.message ?? 'none'
   console.log(`app closed as asked: ${reason}`)
-  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+  // The app performs this close, but the probe asked for it, so it says so.
+  process.exit(reason === 'the probe asked the app to quit or restart' ? 0 : 1)
 }
 
 if (mode === 'cdp-close-after-report') {

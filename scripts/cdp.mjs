@@ -513,13 +513,14 @@ export async function connect(debuggerUrl) {
   })
 
   socket.addEventListener('close', () => {
-    closed = 'the app closed the DevTools connection (its window closed or the process exited)'
+    // A close the probe asked for names that here, so neither the log nor a
+    // rejected in-flight call blames the app for the probe's own teardown.
+    closed = closing ?? 'the app closed the DevTools connection (its window closed or the process exited)'
     if (!pending.size) return
     const inFlight = pending.size
     // Name the cause on stderr too: probes that tolerate transient reload errors
-    // catch the rejection, and the reason would be lost with it. A close the
-    // probe asked for names that instead of claiming the app went away.
-    fs.writeSync(2, `\n[cdp] ${closing ?? closed} while ${inFlight} command(s) were in flight.\n`)
+    // catch the rejection, and the reason would be lost with it.
+    fs.writeSync(2, `\n[cdp] ${closed} while ${inFlight} command(s) were in flight.\n`)
     // Only an abnormal close is announced: the probe still needs the connection
     // (it has not reported its result) and did not ask for the close. Every
     // probe closes its own session as it tears down and some ask the app to quit

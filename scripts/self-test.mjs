@@ -207,8 +207,8 @@ const CASES = [
     name: 'a close the probe asks for with a command in flight stays off the run page',
     exit: 0,
     env: { GITHUB_ACTIONS: 'true' },
-    stdout: ['probe closed mid-command: the app closed the DevTools connection'],
-    stdoutAbsent: ['::warning'],
+    stdout: ['probe closed mid-command: the probe closed the session itself'],
+    stdoutAbsent: ['::warning', 'the app closed the DevTools connection'],
     stderr: ['[cdp] the probe closed the session itself while 1 command(s) were in flight.'],
     stderrAbsent: ['the app closed the DevTools connection'],
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
@@ -218,8 +218,8 @@ const CASES = [
     name: 'outside Actions a probe-requested close prints only the log line',
     exit: 0,
     env: { GITHUB_ACTIONS: '' },
-    stdout: ['probe closed mid-command: the app closed the DevTools connection'],
-    stdoutAbsent: ['::warning'],
+    stdout: ['probe closed mid-command: the probe closed the session itself'],
+    stdoutAbsent: ['::warning', 'the app closed the DevTools connection'],
     stderr: ['[cdp] the probe closed the session itself while 1 command(s) were in flight.']
   },
   {
@@ -229,8 +229,8 @@ const CASES = [
     name: 'a close the probe asked the app to make stays off the run page',
     exit: 0,
     env: { GITHUB_ACTIONS: 'true' },
-    stdout: ['app closed as asked: the app closed the DevTools connection'],
-    stdoutAbsent: ['::warning'],
+    stdout: ['app closed as asked: the probe asked the app to quit or restart'],
+    stdoutAbsent: ['::warning', 'the app closed the DevTools connection'],
     stderr: ['[cdp] the probe asked the app to quit or restart while 1 command(s) were in flight.'],
     stderrAbsent: ['the app closed the DevTools connection'],
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']

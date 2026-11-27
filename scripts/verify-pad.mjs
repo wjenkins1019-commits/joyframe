@@ -118,6 +118,9 @@ async function connect(debuggerUrl) {
   const pending = new Map()
   let nextId = 0
   let closed = null
+  // Why the probe asked for the close, when it did. The probe kills the app as
+  // its run ends, so that close is the probe's own doing, not a lost app.
+  let closing = null
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
     const entry = pending.get(message.id)
@@ -127,7 +130,7 @@ async function connect(debuggerUrl) {
     entry.resolve(message)
   })
   socket.addEventListener('close', () => {
-    closed = 'the app closed the DevTools connection (its window closed or the process exited)'
+    closed = closing ?? 'the app closed the DevTools connection (its window closed or the process exited)'
     if (!pending.size) return
     process.stderr.write(`\n[verify:pad] ${closed} while ${pending.size} command(s) were in flight.\n`)
     for (const entry of pending.values()) {
@@ -152,6 +155,9 @@ async function connect(debuggerUrl) {
     })
   }
   call.socketLost = () => closed !== null
+  call.expectClose = () => {
+    closing = 'the probe killed the app to end the run'
+  }
   return call
 }
 
@@ -1375,6 +1381,7 @@ async function main() {
   finishRun()
 
   const exited = app.exitCode === null ? new Promise((resolve) => app.once('exit', resolve)) : Promise.resolve()
+  call.expectClose()
   app.kill()
   await Promise.race([exited, delay(4000)])
   removeProfile()
