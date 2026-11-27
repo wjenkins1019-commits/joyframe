@@ -12,12 +12,13 @@
  *
  *   node scripts/fixtures/guard-fixture.mjs <mode> [workdir]
  */
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { findWindow, preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
+import { connect, findWindow, preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
 import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
@@ -180,6 +181,85 @@ if (mode === 'stalled-read') {
   )
   console.log(`stalled read: value=${JSON.stringify(value)} waited=${elapsed()}ms`)
   process.exit(value?.open === true && value?.profileCard === false ? 0 : 1)
+}
+
+/**
+ * A one-connection WebSocket endpoint that completes the handshake and then
+ * does whatever `onOpen` says with the socket — hold it to test a command that
+ * is never answered, or destroy it to test a close with work in flight.
+ */
+async function wsEndpoint(onOpen) {
+  const sockets = []
+  const server = http.createServer()
+  server.on('upgrade', (request, socket) => {
+    const key = String(request.headers['sec-websocket-key'] ?? '')
+    const accept = crypto.createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`
+    )
+    sockets.push(socket)
+    onOpen(socket)
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    url: `ws://127.0.0.1:${server.address().port}/devtools/page/fixture`,
+    close: async () => {
+      for (const socket of sockets) socket.destroy()
+      await new Promise((resolve) => server.close(resolve))
+    }
+  }
+}
+
+if (mode === 'cdp-timeout') {
+  // A renderer that accepts the DevTools socket and then never answers: the
+  // command has to end at its timeout, and the reason has to reach the run page.
+  const endpoint = await wsEndpoint(() => {})
+  const session = await connect(endpoint.url)
+  let thrown = null
+  try {
+    await session.call('Page.enable', {}, 400)
+  } catch (error) {
+    thrown = error
+  }
+  session.close()
+  await endpoint.close()
+  const reason = thrown?.message ?? 'none'
+  console.log(`command timeout: ${reason}`)
+  process.exit(reason.includes('did not answer Page.enable within 400ms') ? 0 : 1)
+}
+
+if (mode === 'cdp-close-inflight') {
+  // The app exits while a command is still in flight: the pending call is
+  // rejected with the cause, which must also be announced beyond the log.
+  const endpoint = await wsEndpoint((socket) => setTimeout(() => socket.destroy(), 150))
+  const session = await connect(endpoint.url)
+  let thrown = null
+  try {
+    await session.call('Runtime.evaluate', { expression: '1' }, 5000)
+  } catch (error) {
+    thrown = error
+  }
+  await endpoint.close()
+  const reason = thrown?.message ?? 'none'
+  console.log(`closed mid-command: ${reason}`)
+  // The in-flight call is rejected with the close reason itself, not the
+  // `never ran` prefix a call made after the close gets.
+  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+}
+
+if (mode === 'cdp-close-routine') {
+  // A probe closing its own session with a read still in flight is how a run
+  // ends: the reason belongs in the log, but it must not warn on the run page.
+  const endpoint = await wsEndpoint(() => {})
+  const session = await connect(endpoint.url)
+  const pendingCall = session.call('Runtime.evaluate', { expression: '1' }, 5000).catch((error) => error)
+  session.close()
+  await endpoint.close()
+  const thrown = await pendingCall
+  const reason = thrown?.message ?? 'none'
+  console.log(`probe closed mid-command: ${reason}`)
+  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
 }
 
 /** A loopback port nothing listens on, so discovery's polls all fail. */

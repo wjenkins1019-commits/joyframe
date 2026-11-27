@@ -178,6 +178,7 @@ async function main() {
   const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`], {
     stdio: appLog.stdio
   })
+  let session = null
 
   try {
     const target = await findWindow(PORT)
@@ -188,7 +189,8 @@ async function main() {
     )
 
     if (target) {
-      const { events, evaluate, read } = await createSession(target)
+      session = await createSession(target)
+      const { events, evaluate, read } = session
 
       // This probe covers the empty first-run library, not the welcome flow:
       // quiet the intro and name step before reading the shell.
@@ -243,6 +245,9 @@ async function main() {
       problems.push(...consoleProblems(events))
     }
   } finally {
+    // Close the session before the app goes away, so the ordinary end of the run
+    // is a close the probe asked for rather than an app dropping a live socket.
+    try { session?.close() } catch {}
     if (app.exitCode === null) {
       const gone = new Promise((resolve) => app.once('exit', resolve))
       app.kill()

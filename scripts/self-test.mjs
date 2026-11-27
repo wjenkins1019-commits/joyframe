@@ -173,6 +173,84 @@ const CASES = [
     ]
   },
   {
+    // The app vanishing mid-call used to fail the pending commands with only a
+    // `[cdp]` line in the step log, which a green run never shows anyone.
+    mode: 'cdp-close-inflight',
+    name: 'a DevTools close with a command in flight warns with the count',
+    exit: 0,
+    env: { GITHUB_ACTIONS: '' },
+    stdout: ['closed mid-command: the app closed the DevTools connection'],
+    stdoutAbsent: ['::warning'],
+    stderr: ['[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.']
+  },
+  {
+    mode: 'cdp-close-inflight',
+    name: 'a DevTools close mid-command is annotated and summarized',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: [
+      '::warning title=guard-fixture lost the DevTools connection with 1 command(s) in flight::',
+      'were in flight and were failed rather than left hanging.'
+    ],
+    stdoutAbsent: ['::error'],
+    summary: [
+      '## guard-fixture — the DevTools connection closed mid-command',
+      '- Commands in flight: 1',
+      '- Reason: the app closed the DevTools connection',
+      'This notice does not fail the run.'
+    ]
+  },
+  {
+    // The same close with a read in flight, but the probe asked for it: every
+    // run ends this way, so it stays in the log and off the run page.
+    mode: 'cdp-close-routine',
+    name: 'a close the probe asks for with a command in flight stays off the run page',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: ['probe closed mid-command: the app closed the DevTools connection'],
+    stdoutAbsent: ['::warning'],
+    stderr: [
+      '[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
+    ],
+    summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
+  },
+  {
+    mode: 'cdp-close-routine',
+    name: 'outside Actions a probe-requested close prints only the log line',
+    exit: 0,
+    env: { GITHUB_ACTIONS: '' },
+    stdout: ['probe closed mid-command: the app closed the DevTools connection'],
+    stdoutAbsent: ['::warning'],
+    stderr: [
+      '[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
+    ]
+  },
+  {
+    mode: 'cdp-timeout',
+    name: 'an unanswered command warns with its method and deadline',
+    exit: 0,
+    env: { GITHUB_ACTIONS: '' },
+    stdout: ['command timeout: DevTools did not answer Page.enable within 400ms'],
+    stdoutAbsent: ['::warning'],
+    stderr: ['[cdp] Page.enable went unanswered for 400ms.']
+  },
+  {
+    mode: 'cdp-timeout',
+    name: 'an unanswered command is annotated and summarized',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: [
+      '::warning title=guard-fixture waited 400ms for Page.enable::DevTools did not answer Page.enable within 400ms'
+    ],
+    stdoutAbsent: ['::error'],
+    summary: [
+      '## guard-fixture — a DevTools command went unanswered',
+      '- Command: `Page.enable`',
+      '- Timeout: 400ms',
+      'This notice does not fail the run.'
+    ]
+  },
+  {
     mode: 'read-gives-up',
     name: 'a read that only ever throws surfaces the error at the deadline',
     exit: 0,
@@ -255,7 +333,7 @@ const check = (name, ok, detail) => results.push({ name, ok, detail })
 try {
   for (const [index, testCase] of CASES.entries()) {
     // One summary file per case, so an appended section cannot satisfy another.
-    const summaryFile = testCase.summary ? path.join(ROOT, `${index}-${testCase.mode}.md`) : ''
+    const summaryFile = path.join(ROOT, `${index}-${testCase.mode}.md`)
     const run = spawnSync(process.execPath, [FIXTURE, testCase.mode, ROOT], {
       encoding: 'utf8',
       env: { ...process.env, ...(testCase.env ?? {}), GITHUB_STEP_SUMMARY: summaryFile }
@@ -270,7 +348,8 @@ try {
     ]
     const unexpected = [
       ...(testCase.stdoutAbsent ?? []).filter((text) => stdout.includes(text)),
-      ...(testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text))
+      ...(testCase.stderrAbsent ?? []).filter((text) => stderr.includes(text)),
+      ...(testCase.summaryAbsent ?? []).filter((text) => summary.includes(text))
     ]
     const lineProblems = (testCase.stdoutLines ?? []).flatMap(({ prefix, count }) => {
       const actual = stdout.split(/\r?\n/).filter((line) => line.startsWith(prefix)).length

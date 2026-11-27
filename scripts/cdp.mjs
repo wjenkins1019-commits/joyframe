@@ -50,29 +50,40 @@ function warnStalledRead({ label, expression, timeout, ready }) {
       `  expression: ${brief(expression, 120)}\n` +
       `  predicate: ${brief(ready, 160)}\n`
   )
-  if (process.env.GITHUB_ACTIONS !== 'true') return
+  announceDiagnostic({
+    title: `${label} read settled at its deadline`,
+    heading: `${label} — a read settled at its ${timeout}ms deadline`,
+    message:
+      `expression: ${brief(expression, 120)} | predicate: ${brief(ready, 160)} | deadline: ${timeout}ms — ` +
+      'the value may only have partly hydrated.',
+    summary: [
+      '> The predicate never matched, so the read returned a value that may only have partly hydrated.',
+      '',
+      `- Expression: ${code(expression)}`,
+      `- Predicate: ${code(ready)}`,
+      `- Deadline: ${timeout}ms`
+    ]
+  })
+}
 
+/**
+ * Put a diagnostic that would otherwise only reach the step log on the run page.
+ *
+ * A `[cdp]` line is read by whoever downloads the log and greps it, so a stall
+ * or a lost connection is invisible to anyone scanning a green run. Inside
+ * Actions these become a `warning` annotation and a job-summary section: seen
+ * where the run is actually looked at, never an error annotation, and never a
+ * change to the exit code — each of these describes a run that may still pass.
+ * Outside Actions nothing is added and the caller's own output carries it.
+ */
+function announceDiagnostic({ title, heading = title, message, summary }) {
+  if (process.env.GITHUB_ACTIONS !== 'true') return
   // A `::` inside a command payload would end the command early.
-  const payload = (text, limit) => brief(text, limit).replace(/::/g, ':')
+  const payload = (text) => String(text).replace(/::/g, ':').replace(/\r?\n/g, ' ')
   console.log(
-    `::warning title=${escapeCommand(`${label} read settled at its deadline`, true)}::` +
-      escapeCommand(
-        `expression: ${payload(expression, 120)} | predicate: ${payload(ready, 160)} | deadline: ${timeout}ms — ` +
-          'the value may only have partly hydrated.'
-      )
+    `::warning title=${escapeCommand(payload(title), true)}::${escapeCommand(payload(message))}`
   )
-  appendSummary([
-    `## ${label} — a read settled at its ${timeout}ms deadline`,
-    '',
-    '> The predicate never matched, so the read returned a value that may only have partly hydrated.',
-    '',
-    `- Expression: ${code(expression)}`,
-    `- Predicate: ${code(ready)}`,
-    `- Deadline: ${timeout}ms`,
-    '',
-    'This notice does not fail the run.',
-    ''
-  ])
+  appendSummary([`## ${payload(heading)}`, '', ...summary, '', 'This notice does not fail the run.', ''])
 }
 
 /**
@@ -471,6 +482,10 @@ export async function connect(debuggerUrl) {
   const events = []
   let nextId = 0
   let closed = null
+  // Set when the probe asks for the close. Every probe closes its session as it
+  // tears down, and a probe may abandon a read that is still in flight, so a
+  // close we asked for is the ordinary end of a run — not a lost connection.
+  let closing = false
 
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
@@ -488,9 +503,24 @@ export async function connect(debuggerUrl) {
   socket.addEventListener('close', () => {
     closed = 'the app closed the DevTools connection (its window closed or the process exited)'
     if (!pending.size) return
+    const inFlight = pending.size
     // Name the cause on stderr too: probes that tolerate transient reload errors
     // catch the rejection, and the reason would be lost with it.
-    fs.writeSync(2, `\n[cdp] ${closed} while ${pending.size} command(s) were in flight.\n`)
+    fs.writeSync(2, `\n[cdp] ${closed} while ${inFlight} command(s) were in flight.\n`)
+    // Only an unasked-for close is announced: the app dropping the socket under
+    // a waiting command is the case worth seeing on the run page, while a probe
+    // closing its own session is how every run ends and would warn on each one.
+    if (!closing) announceDiagnostic({
+      title: `${probeName()} lost the DevTools connection with ${inFlight} command(s) in flight`,
+      heading: `${probeName()} — the DevTools connection closed mid-command`,
+      message: `${closed}; ${inFlight} command(s) were in flight and were failed rather than left hanging.`,
+      summary: [
+        `- Commands in flight: ${inFlight}`,
+        `- Reason: ${closed}`,
+        '',
+        'Every in-flight call was rejected with that reason, so a probe fails with the cause instead of hanging.'
+      ]
+    })
     for (const entry of pending.values()) {
       clearTimeout(entry.timer)
       entry.reject(new Error(closed))
@@ -500,7 +530,10 @@ export async function connect(debuggerUrl) {
 
   return {
     events,
-    close: () => socket.close(),
+    close: () => {
+      closing = true
+      socket.close()
+    },
     call: (method, params = {}, timeout = CALL_TIMEOUT_MS) => {
       if (closed) return Promise.reject(new Error(`DevTools ${method} never ran: ${closed}`))
       return new Promise((resolve, reject) => {
@@ -508,7 +541,19 @@ export async function connect(debuggerUrl) {
         const timer = setTimeout(() => {
           pending.delete(id)
           fs.writeSync(2, `\n[cdp] ${method} went unanswered for ${timeout}ms.\n`)
-          reject(new Error(`DevTools did not answer ${method} within ${timeout}ms — the renderer stopped responding`))
+          const message = `DevTools did not answer ${method} within ${timeout}ms — the renderer stopped responding`
+          announceDiagnostic({
+            title: `${probeName()} waited ${timeout}ms for ${method}`,
+            heading: `${probeName()} — a DevTools command went unanswered`,
+            message,
+            summary: [
+              `- Command: ${code(method)}`,
+              `- Timeout: ${timeout}ms`,
+              '',
+              'The call was rejected with that reason, so the probe fails with it instead of hanging.'
+            ]
+          })
+          reject(new Error(message))
         }, timeout)
         // The timeout is a failure report, not work worth keeping the process alive for.
         timer.unref?.()
