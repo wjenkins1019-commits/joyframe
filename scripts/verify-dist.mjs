@@ -222,13 +222,15 @@ const ROM_DETAIL = `(() => {
   const switchLabel = [...detail.querySelectorAll('label')].find((entry) => entry.textContent.includes('Launch the ROM directly'))
   const toggle = switchLabel?.querySelector('input[type="checkbox"]')
   const play = [...detail.querySelectorAll('button')].find((entry) => ['Play', 'Resume'].includes(entry.textContent.trim()))
-  // The emulator profile loads after the page renders; its args are empty until then.
+  // The per-game profile card mounts after the page does; its args input only
+  // exists once it has. Key on the input itself, not its value: a game with no
+  // launch arguments keeps the value empty even when the card is fully rendered.
   const args = detail.querySelector('input[placeholder="Overrides emulator args"]')
   return {
     open: true,
     switch: Boolean(toggle),
     direct: Boolean(toggle?.checked),
-    profileArgs: args ? args.value : '',
+    profileCard: Boolean(args),
     canPlay: Boolean(play && !play.disabled),
     playLabel: play?.textContent.trim() ?? null
   }
@@ -452,10 +454,10 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
       entry?.click()
       return Boolean(entry)
     })()`)
-    // The detail panel mounts before the game's emulator profile arrives, and the
-    // ROM switch reads off until it does: wait for the profile's args, not just
-    // for the panel, or the switch check races the load (it did once in five).
-    return read(ROM_DETAIL, (state) => Boolean(state?.open) && Boolean(state?.profileArgs))
+    // The detail panel mounts before the game's per-game profile card does, and
+    // the ROM switch reads off until it arrives: wait for the card, not just the
+    // panel, or the switch check races the load (it did once in five).
+    return read(ROM_DETAIL, (state) => Boolean(state?.open) && Boolean(state?.profileCard))
   }
 
   const clickPlay = clickPlayIn(read)
@@ -621,7 +623,9 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
     entry?.click()
     return Boolean(entry)
   })()`)
-  const methods = await read(DISC_ROWS, Boolean)
+  // An empty list is truthy, so a read keyed on Boolean settles on the panel
+  // before its rows render: wait for the rows themselves.
+  const methods = await read(DISC_ROWS, (rows) => Array.isArray(rows) && rows.length > 0)
   const badges = (methods ?? []).map((entry) => entry.badge).sort()
   const labels = (methods ?? []).map((entry) => entry.label).sort()
   check(
@@ -793,7 +797,7 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
       entry?.click()
       return Boolean(entry)
     })()`)
-    const methods = await read(DISC_ROWS, Boolean)
+    const methods = await read(DISC_ROWS, (rows) => Array.isArray(rows) && rows.length > 0)
     const badges = (methods ?? []).map((row) => row.badge).sort()
     check(
       `${label}: the merged game has a Disc row per disc`,
