@@ -269,7 +269,8 @@ The startup ident has its own repeatable coverage, and `npm run check` now runs 
 without activating the screen underneath, never paints in `off`, and plays exactly once in `first-run`;
 `npm run verify:intro-ui` drives the real Settings dropdown through `always → off → first-run → always`, restarting
 the app each time to prove the choice persists and the next launch follows it; and `npm run verify:intro-pad` does
-the same reach-and-step by controller only. The welcome name step has its own packaged check,
+the same reach-and-step by controller only — CI's controller job runs it right after the pad suite, since a pad has no
+keyboard equivalent. The welcome name step has its own packaged check,
 `npm run verify:intro-name-pad`: it boots `release/win-unpacked` with an empty name and a virtual pad, proves a pad
 button moves from the name step to the ident, and proves real key events still edit the name instead of skipping it.
 CI's installer job runs `verify:intro-ui` against `release/win-unpacked` as well (`JOYFRAME_EXE` is what points it at

@@ -87,6 +87,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'installer',
     paths: ['.verify-logs/verify-intro-ui.log'],
     hidden: true
+  },
+  {
+    name: `intro-pad-artifacts-attempt-${ATTEMPT}`,
+    label: 'the controller intro-dropdown artifact keeps its name, path and hidden files',
+    job: 'controller-checks',
+    paths: ['.verify-logs/verify-intro-pad.log'],
+    hidden: true
   }
 ]
 
@@ -103,6 +110,7 @@ const EXPECTED_CHECKS = [
   'each probe step names the artifacts its summary lists',
   'every installer probe has a timeout that fits inside the job',
   'the dev controller probe has a timeout that fits inside the job',
+  'the intro-pad probe runs in controller-checks and fits inside the job',
   'the installed-copy job installs the built package and runs the installed probe',
   'the update-channel probe runs in no-gui-checks and fits inside the job',
   'the update-channel upload follows its probe and only runs on that probe failure',
@@ -283,6 +291,27 @@ check(
   'the dev controller probe has a timeout that fits inside the job',
   Number.isInteger(devTimeout) && devTimeout > 0 && devTimeout < devJob['timeout-minutes'],
   `controller ${devTimeout ?? '(unset)'}m of ${devJob?.['timeout-minutes'] ?? '(unset)'}m`
+)
+
+// The controller path to the intro dropdown has no keyboard equivalent, so it
+// runs in the same job as the pad suite: after it, with its own timeout inside
+// the job budget and a failure upload of the log the probe writes.
+const introPadStep = (devJob?.steps ?? []).find((step) => step.id === 'intro-pad')
+const introPadUpload = uploads.find((upload) => artifactName(upload.step) === `intro-pad-artifacts-attempt-${ATTEMPT}`)
+const introPadIndex = (devJob?.steps ?? []).findIndex((step) => step.id === 'intro-pad')
+const padIndex = (devJob?.steps ?? []).findIndex((step) => step.id === 'controller')
+check(
+  'the intro-pad probe runs in controller-checks and fits inside the job',
+  introPadStep?.run === 'npm run verify:intro-pad' &&
+    Number.isInteger(introPadStep?.['timeout-minutes']) &&
+    introPadStep['timeout-minutes'] > 0 &&
+    introPadStep['timeout-minutes'] < devJob['timeout-minutes'] &&
+    introPadIndex > padIndex &&
+    String(introPadStep?.env?.JF_FAILURE_ARTIFACTS ?? '').includes('intro-pad-artifacts-attempt-') &&
+    gatesOnProbe(introPadUpload, 'intro-pad'),
+  introPadStep
+    ? `run ${introPadStep.run}, timeout ${introPadStep['timeout-minutes']}m of ${devJob['timeout-minutes']}m, step ${introPadIndex} after ${padIndex}, artifacts ${introPadStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}, upload ${introPadUpload ? condition(introPadUpload.step) : 'missing'}`
+    : 'step intro-pad is missing'
 )
 
 // The installed copy is the one thing CI could not prove: the installer job
