@@ -102,6 +102,8 @@ const PROFILE_CHECKS = {
     'the disc coming back restores the default launch',
     'an emulator default falls back to the disc on disk',
     'that fallback names the emulator default as missing',
+    'a game without a default method falls back to a disc on disk',
+    'that fallback names the missing disc too',
     'restore restarts the app on the restored library',
     'the restored snapshot brings back one entry per disc',
     'restore keeps a copy of the replaced library'
@@ -138,6 +140,10 @@ const MULTI_RECORD = 'stub-args.json'
 const RECOVERY_TITLE = 'Multidisc Recovery Probe'
 const RECOVERY_DISCS = [1, 2].map((disc) => path.join('roms', 'ps1', `${RECOVERY_TITLE} (Disc ${disc}).cue`))
 const RECOVERY_RECORD = 'stub-args.json'
+
+/** A second game in the same profile: one live disc method, deliberately no default. */
+const ORPHAN_TITLE = 'Orphan Disc Probe'
+const ORPHAN_DISCS = [1, 2].map((disc) => path.join('orphan', `${ORPHAN_TITLE} (Disc ${disc}).cue`))
 
 /** Every toast the renderer is showing; a launch result arrives as one. */
 const TOASTS = `[...document.querySelectorAll('[role="status"] p')].map((el) => el.textContent.trim())`
@@ -657,6 +663,30 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
     games.map((game) => ({ title: game.title, playtimeSeconds: game.playtimeSeconds, notes: game.notes }))
   )`
 
+  /** Opens a game's page from the library, leaving any detail page already open. */
+  const openGame = async (title) => {
+    const back = await evaluate(`(() => {
+      const detail = document.querySelector('[data-jf-detail="1"]')
+      const button = detail && [...detail.querySelectorAll('button')].find((entry) =>
+        entry.textContent.includes('Back to library')
+      )
+      button?.click()
+      return Boolean(button)
+    })()`)
+    if (back) await read(`!document.querySelector('[data-jf-detail="1"]')`, Boolean)
+    await evaluate(`document.querySelector('button[aria-label="Library"]')?.click()`)
+    await read(`document.querySelector('main[data-jf-view]')?.getAttribute('data-jf-view') === 'library'`, Boolean)
+    const opened = await evaluate(`(() => {
+      const entry = [...document.querySelectorAll('[data-game-id]')].find((card) =>
+        card.getAttribute('aria-label')?.startsWith(${JSON.stringify(title)})
+      )
+      entry?.click()
+      return Boolean(entry)
+    })()`)
+    if (!opened) return false
+    return Boolean(await read(`Boolean(document.querySelector('[data-jf-detail="1"]'))`, Boolean))
+  }
+
   let restored = null
   try {
     const legacy = await evaluate(listGames)
@@ -698,9 +728,10 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
     const library = await read(viewProbe, (value) => value.view === 'library' && value.cards.length > 0)
     check(
       `${label}: the merged set shows as one card`,
+      // The profile also holds the orphan game, so count the set's own cards:
+      // a per-disc split would put three titles behind this prefix.
       library?.view === 'library' &&
-        library.cards.length === 1 &&
-        library.cards[0].startsWith(RECOVERY_TITLE),
+        (library.cards ?? []).filter((card) => card.startsWith(RECOVERY_TITLE)).length === 1,
       `view=${library?.view} cards=${library ? library.cards.join(' | ') : 'none'}`
     )
     await evaluate(`(() => {
@@ -816,6 +847,37 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
       `${label}: that fallback names the emulator default as missing`,
       Boolean(emulatorToast),
       emulatorToast ?? `no such toast: ${JSON.stringify(emulatorToasts ?? [])}`
+    )
+
+    // The third fallback branch: the game has no default method at all, so its
+    // own ROM is the launch target and a live disc stands in for that path.
+    const orphanOpen = await openGame(ORPHAN_TITLE)
+    fs.rmSync(path.join(dir, ORPHAN_DISCS[0]), { force: true })
+    fs.rmSync(record, { force: true })
+    const orphanPlay = orphanOpen ? await clickPlay() : null
+    const orphanToasts = orphanOpen
+      ? await read(
+          TOASTS,
+          (lines) =>
+            Array.isArray(lines) &&
+            lines.some((line) => line.includes(ORPHAN_TITLE) && line.includes('(default disc missing)')),
+          8000
+        )
+      : null
+    const orphanArgs = orphanOpen ? await waitForArgs(record) : null
+    const orphanToast = (orphanToasts ?? []).find((line) => line.includes(ORPHAN_TITLE))
+    check(
+      `${label}: a game without a default method falls back to a disc on disk`,
+      Boolean(orphanPlay) &&
+        Array.isArray(orphanArgs) &&
+        orphanArgs.length === 1 &&
+        path.resolve(orphanArgs[0]) === path.resolve(path.join(dir, ORPHAN_DISCS[1])),
+      `page=${orphanOpen ? 'opened' : 'missing'} button=${orphanPlay ?? 'missing'} stub=${JSON.stringify(orphanArgs)}`
+    )
+    check(
+      `${label}: that fallback names the missing disc too`,
+      Boolean(orphanToast) && /Disc 2 \(default disc missing\)/.test(orphanToast),
+      orphanToast ?? `no such toast: ${JSON.stringify(orphanToasts ?? [])}`
     )
 
     if (premerge.length !== 1) return
