@@ -127,6 +127,13 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
 
+      # Throwaway branch only: force one stalled read so the warning it prints is
+      # proven to reach a real run page as an annotation and a summary section,
+      # with the step still green.
+      - name: Demo — a stalled read reaches the run page
+        id: stall-demo
+        run: node scripts/fixtures/stall-demo.mjs
+
   # The controller suite is the only coverage of the game page's back button:
   # the page has to appear without moving, and one immediate click has to close
   # it. Both are regressions that shipped once, so the suite runs on every push
