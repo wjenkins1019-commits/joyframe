@@ -24,6 +24,7 @@ import {
   PageHeader,
   Spinner,
   Textarea,
+  Toggle,
   cx
 } from '../ui'
 
@@ -219,10 +220,30 @@ export function EmulatorsView(): React.JSX.Element {
                         {emulator.coreDir ? ` · ${emulator.coreDir}` : ''}
                       </p>
                     </div>
+                    <div>
+                      <span className="text-white/35">Fullscreen preset</span>
+                      <p className="break-all font-mono text-white/70">
+                        {emulator.fullscreenSupported ? emulator.fullscreenArgs : 'No verified flag — set it in the emulator'}
+                      </p>
+                    </div>
                     <div className="sm:col-span-2">
                       <span className="text-white/35">Save states</span>
                       <p className="break-all font-mono text-white/70">{emulator.saveStateDir || 'Not configured'}</p>
                     </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <Toggle
+                      label="Start games in fullscreen"
+                      description={
+                        emulator.fullscreenSupported
+                          ? `Adds ${emulator.fullscreenArgs} before the ROM so the game opens fullscreen.`
+                          : 'No verified fullscreen flag for this emulator, so launches stay windowed and nothing extra is passed.'
+                      }
+                      checked={emulator.fullscreenSupported && emulator.fullscreen}
+                      disabled={!emulator.fullscreenSupported}
+                      onChange={(value) => void api.emulators.update(emulator.id, { fullscreen: value }).then(refresh)}
+                    />
                   </div>
 
                   {tests[emulator.id] && (
@@ -282,8 +303,9 @@ export function EmulatorsView(): React.JSX.Element {
         <p className="mb-2 font-bold uppercase tracking-wider text-white/70">How launching works</p>
         <p>
           Each ROM game stores an emulator, core and argument template. JOYFRAME substitutes <code className="text-white/80">{'{rom}'}</code>,{' '}
-          <code className="text-white/80">{'{core}'}</code> and <code className="text-white/80">{'{game}'}</code> then starts the emulator
-          detached so your library stays responsive. Validate a configuration with <strong>Test config</strong> — it checks the executable,
+          <code className="text-white/80">{'{core}'}</code> and           <code className="text-white/80">{'{game}'}</code> then starts the emulator
+          detached so your library stays responsive. Emulators with a known fullscreen flag get it added before the ROM unless you switch that
+          off; unrecognised emulators launch exactly as written. Validate a configuration with <strong>Test config</strong> — it checks the executable,
           core file and placeholders without launching a game. Advanced per-game preferences live on each game page.
         </p>
       </div>

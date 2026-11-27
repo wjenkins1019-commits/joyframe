@@ -13,6 +13,7 @@ import type {
   Screenshot
 } from '../../shared/types.ts'
 import type { Db } from './db.ts'
+import { fullscreenPresetFor } from './fullscreen-presets.ts'
 
 export function uid(): string {
   return crypto.randomUUID()
@@ -101,6 +102,7 @@ export function rowToPlatform(row: Record<string, unknown>): Platform {
 }
 
 export function rowToEmulator(row: Record<string, unknown>): Emulator {
+  const preset = fullscreenPresetFor(String(row.path ?? ''))
   return {
     id: String(row.id),
     name: String(row.name),
@@ -112,7 +114,11 @@ export function rowToEmulator(row: Record<string, unknown>): Emulator {
     coreDir: String(row.core_dir ?? ''),
     saveStateDir: String(row.save_state_dir ?? ''),
     notes: String(row.notes ?? ''),
-    createdAt: String(row.created_at ?? '')
+    createdAt: String(row.created_at ?? ''),
+    // A row written before the column existed counts as on, like the default.
+    fullscreen: row.fullscreen === undefined || row.fullscreen === null ? true : Number(row.fullscreen) === 1,
+    fullscreenSupported: Boolean(preset),
+    fullscreenArgs: preset ? preset.args.join(' ') : ''
   }
 }
 

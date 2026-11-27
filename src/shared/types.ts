@@ -128,6 +128,12 @@ export interface Emulator {
   saveStateDir: string
   notes: string
   createdAt: string
+  /** Start ROM launches straight into fullscreen (per-emulator opt-in). */
+  fullscreen: boolean
+  /** Whether a verified fullscreen flag exists for this executable. */
+  fullscreenSupported: boolean
+  /** The flag(s) added, for display; '' when unsupported. */
+  fullscreenArgs: string
 }
 
 export interface EmulatorPlatformConfig {

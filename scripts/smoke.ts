@@ -13,7 +13,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openDatabase } from '../src/main/services/db.ts'
-import { addEmulator, testEmulator } from '../src/main/services/emulators.ts'
+import { addEmulator, testEmulator, updateEmulator } from '../src/main/services/emulators.ts'
 import type { MetadataRefreshSummary } from '../src/shared/types.ts'
 import { describeRefresh } from '../src/renderer/src/lib/refresh-summary.ts'
 import { Launcher, buildLaunchCommand } from '../src/main/services/launcher.ts'
@@ -313,6 +313,64 @@ await check('Launch command appends the ROM when the template never mentions it'
     buildLaunchCommand(db, explicitDirect, { ...settings, launchRomsDirectly: false }).args,
     ['--fullscreen', chrono.romPath]
   )
+})
+
+await check('fullscreen presets add their verified flag before the ROM', () => {
+  const raDir = path.join(root, 'emulators', 'RetroArchFull')
+  const raPath = path.join(raDir, 'retroarch.exe')
+  write(raPath, 'MZ', 1024)
+  const ra = addEmulator(db, { name: 'RetroArch Full', path: raPath, platformIds: ['snes'], argsTemplate: '"{rom}"' })
+  assert.equal(ra.fullscreenSupported, true)
+  assert.equal(ra.fullscreenArgs, '--fullscreen')
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: ra.id, launchArgs: '', launchMethods: [], extra: {} }
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', chrono.romPath])
+
+  // Off means the flag disappears; the ROM still launches.
+  updateEmulator(db, ra.id, { fullscreen: false })
+  assert.deepEqual(buildLaunchCommand(db, game).args, [chrono.romPath])
+  updateEmulator(db, ra.id, { fullscreen: true })
+})
+
+await check('presets never duplicate a flag the template already carries', () => {
+  const raDir = path.join(root, 'emulators', 'RetroArchManual')
+  const raPath = path.join(raDir, 'retroarch.exe')
+  write(raPath, 'MZ', 1024)
+  const ra = addEmulator(db, {
+    name: 'RetroArch Manual',
+    path: raPath,
+    platformIds: ['snes'],
+    argsTemplate: '--fullscreen "{rom}"'
+  })
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: ra.id, launchArgs: '', launchMethods: [], extra: {} }
+  const args = buildLaunchCommand(db, game).args
+  assert.deepEqual(args, ['--fullscreen', chrono.romPath])
+})
+
+await check('companion flags ride along with the fullscreen switch', () => {
+  const rpcsDir = path.join(root, 'emulators', 'RPCS3')
+  const rpcsPath = path.join(rpcsDir, 'rpcs3.exe')
+  write(rpcsPath, 'MZ', 1024)
+  const rpcs3 = addEmulator(db, { name: 'RPCS3', path: rpcsPath, platformIds: ['ps3'], argsTemplate: '"{rom}"' })
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, platformId: 'ps3', emulatorId: rpcs3.id, launchArgs: '', launchMethods: [], extra: {} }
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--no-gui', '--fullscreen', chrono.romPath])
+})
+
+await check('emulators without a verified flag launch unchanged', () => {
+  const unknownDir = path.join(root, 'emulators', 'MysteryEmu')
+  const unknownPath = path.join(unknownDir, 'mystery-emu.exe')
+  write(unknownPath, 'MZ', 1024)
+  const unknown = addEmulator(db, { name: 'Mystery Emulator', path: unknownPath, platformIds: ['snes'], argsTemplate: '"{rom}"' })
+  assert.equal(unknown.fullscreenSupported, false)
+  assert.equal(unknown.fullscreenArgs, '')
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: unknown.id, launchArgs: '', launchMethods: [], extra: {} }
+  assert.deepEqual(buildLaunchCommand(db, game).args, [chrono.romPath])
+  // Enabling it manually still never invents a flag.
+  updateEmulator(db, unknown.id, { fullscreen: true })
+  assert.deepEqual(buildLaunchCommand(db, game).args, [chrono.romPath])
 })
 
 console.log('\n[3] Steam integration')

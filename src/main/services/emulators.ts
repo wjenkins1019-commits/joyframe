@@ -2,7 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { Emulator } from '../../shared/types.ts'
 import type { Db } from './db.ts'
+import { fullscreenArgsFor } from './fullscreen-presets.ts'
 import { nowIso, rowToEmulator, uid } from './repo.ts'
+
+/** Tokens of an argument template, quotes stripped, for duplicate-flag checks. */
+function splitTemplateArgs(template: string): string[] {
+  return (template.match(/"[^"]*"|\S+/g) ?? []).map((token) => token.replace(/^"/, '').replace(/"$/, ''))
+}
 
 interface CatalogueEntry {
   name: string
@@ -225,8 +231,8 @@ export function addEmulator(db: Db, input: Partial<Emulator>): Emulator {
   const argsTemplate = input.argsTemplate ?? catalogue?.argsTemplate ?? '"{rom}"'
   const id = uid()
   db.prepare(
-    `INSERT INTO emulators (id, name, path, detected, platform_ids, args_template, core, core_dir, save_state_dir, notes, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO emulators (id, name, path, detected, platform_ids, args_template, core, core_dir, save_state_dir, notes, created_at, fullscreen)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(path) DO UPDATE SET
        name = excluded.name, platform_ids = excluded.platform_ids, args_template = excluded.args_template,
        core = excluded.core, core_dir = excluded.core_dir, save_state_dir = excluded.save_state_dir,
@@ -242,7 +248,10 @@ export function addEmulator(db: Db, input: Partial<Emulator>): Emulator {
     input.coreDir ?? (catalogue?.coreSubdir ? path.join(dir, catalogue.coreSubdir) : ''),
     input.saveStateDir ?? (catalogue?.stateSubdir ? path.join(dir, catalogue.stateSubdir) : defaultStateDir(name, dir)),
     input.notes ?? '',
-    nowIso()
+    nowIso(),
+    // Known emulators start fullscreen; unsupported ones store the flag but
+    // never use it, so adding an emulator stays a one-step action.
+    input.fullscreen === false ? 0 : 1
   )
   const row = db.prepare('SELECT * FROM emulators WHERE path = ?').get(input.path) as Record<string, unknown>
   return rowToEmulator(row)
@@ -260,14 +269,15 @@ export function updateEmulator(db: Db, id: string, patch: Partial<Emulator>): Em
     core: 'core',
     coreDir: 'core_dir',
     saveStateDir: 'save_state_dir',
-    notes: 'notes'
+    notes: 'notes',
+    fullscreen: 'fullscreen'
   }
   for (const [key, column] of Object.entries(map)) {
     if (!(key in patch)) continue
     const raw = (patch as Record<string, unknown>)[key]
     sets.push(`${column} = ?`)
     if (key === 'platformIds') params.push(JSON.stringify(raw ?? []))
-    else if (key === 'detected') params.push(raw ? 1 : 0)
+    else if (key === 'detected' || key === 'fullscreen') params.push(raw ? 1 : 0)
     else params.push(raw === null || raw === undefined ? '' : String(raw))
   }
   if (sets.length) {
@@ -323,10 +333,14 @@ export function testEmulator(db: Db, id: string, platformId?: string): { ok: boo
     }
   }
   const sample = platformId ? `sample-${platformId}.rom` : 'game.rom'
-  const command = [emulator.path, template.replace('{rom}', sample).replace('{core}', core || '{core}')].join(' ')
+  // Show the fullscreen preset too, so the test matches what a launch runs.
+  const fullscreen = fullscreenArgsFor(emulator.path, emulator.fullscreen, splitTemplateArgs(template))
+  const command = [emulator.path, ...fullscreen, template.replace('{rom}', sample).replace('{core}', core || '{core}')].join(' ')
   return {
     ok: true,
-    message: 'Configuration is valid. The executable, core and placeholders resolve correctly.',
+    message: emulator.fullscreenSupported
+      ? `Configuration is valid. Games start fullscreen (${emulator.fullscreenArgs}).`
+      : 'Configuration is valid. The executable, core and placeholders resolve correctly.',
     command
   }
 }

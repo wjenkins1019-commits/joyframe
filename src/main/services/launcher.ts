@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { AppSettings, Game, LaunchNotice, LaunchResult, PlayState } from '../../shared/types.ts'
 import type { Db } from './db.ts'
 import { coreForPlatform } from './emulators.ts'
+import { fullscreenArgsFor } from './fullscreen-presets.ts'
 import { finishGamePlaytime } from './library.ts'
 import { killTree, listProcesses } from './processes.ts'
 import { getGame, rowToEmulator, uid } from './repo.ts'
@@ -105,6 +106,11 @@ function resolveEmulator(
   // whether a template without {rom} still opens the game or a bare emulator.
   const launchDirectly = game.extra.launchRomDirectly ?? settings?.launchRomsDirectly ?? true
   if (!passesRom && launchDirectly) args.push(game.romPath)
+
+  // A verified fullscreen preset for this emulator starts the game fullscreen.
+  // Emulators without one get no extra arguments, so the launch is unchanged.
+  const fullscreenArgs = fullscreenArgsFor(emulator.path, emulator.fullscreen, args)
+  if (fullscreenArgs.length) args.unshift(...fullscreenArgs)
 
   return {
     exe: emulator.path,
