@@ -7,8 +7,9 @@
 # the backend smoke test against real fixtures.
 #
 # The controller job boots Electron and drives the renderer over the DevTools
-# protocol with a virtual pad, both for the game page and for the intro
-# dropdown's controller path. windows-latest provides an interactive desktop
+# protocol with a virtual pad, for the game page, the intro dropdown's
+# controller path and the startup ident's own skip and off behaviour.
+# windows-latest provides an interactive desktop
 # session, so those probes do not need a self-hosted runner. This is the job
 # that holds the game page's back-button checks, which is why it cannot stay a
 # local-only command. The installer job builds the package and then runs the
@@ -191,6 +192,31 @@ jobs:
           name: intro-pad-artifacts-attempt-${{ github.run_attempt }}
           path: .verify-logs/verify-intro-pad.log
           if-no-files-found: warn
+          include-hidden-files: true
+
+      # The dropdown probes only prove a stored mode is followed; the ident's
+      # own behaviour — auto-advance, three skip paths that must not click
+      # through, never painting in `off`, playing once in `first-run` — had no
+      # CI coverage at all. Both script halves boot dev Electron, so they belong
+      # here with the pad suite, not in the packaged job.
+      - name: Startup ident — auto-advance, skips, off and first-run
+        id: intro
+        timeout-minutes: 3
+        env:
+          JF_FAILURE_ARTIFACTS: intro-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:intro
+
+      - name: Upload intro artifacts
+        if: failure() && steps.intro.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: intro-artifacts-attempt-${{ github.run_attempt }}
+          path: |
+            .verify-logs/verify-intro.log
+            .verify-logs/verify-intro-first-run.log
+          if-no-files-found: warn
+          # Both logs live under a dot-directory, which upload-artifact skips
+          # unless this is on.
           include-hidden-files: true
 
   # `npm run dist` is the only step that proves the tracked brand assets reach a

@@ -101,6 +101,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'no-gui-checks',
     paths: ['.verify-logs/verify-signing.log'],
     hidden: true
+  },
+  {
+    name: `intro-artifacts-attempt-${ATTEMPT}`,
+    label: 'the startup-ident artifact keeps its name, both logs and hidden files',
+    job: 'controller-checks',
+    paths: ['.verify-logs/verify-intro.log', '.verify-logs/verify-intro-first-run.log'],
+    hidden: true
   }
 ]
 
@@ -118,6 +125,7 @@ const EXPECTED_CHECKS = [
   'every installer probe has a timeout that fits inside the job',
   'the dev controller probe has a timeout that fits inside the job',
   'the intro-pad probe runs in controller-checks and fits inside the job',
+  'the intro probe runs in controller-checks and fits inside the job',
   'the installed-copy job installs the built package and runs the installed probe',
   'the update-channel probe runs in no-gui-checks and fits inside the job',
   'the update-channel upload follows its probe and only runs on that probe failure',
@@ -301,26 +309,50 @@ check(
   `controller ${devTimeout ?? '(unset)'}m of ${devJob?.['timeout-minutes'] ?? '(unset)'}m`
 )
 
-// The controller path to the intro dropdown has no keyboard equivalent, so it
-// runs in the same job as the pad suite: after it, with its own timeout inside
-// the job budget and a failure upload of the log the probe writes.
-const introPadStep = (devJob?.steps ?? []).find((step) => step.id === 'intro-pad')
-const introPadUpload = uploads.find((upload) => artifactName(upload.step) === `intro-pad-artifacts-attempt-${ATTEMPT}`)
-const introPadIndex = (devJob?.steps ?? []).findIndex((step) => step.id === 'intro-pad')
-const padIndex = (devJob?.steps ?? []).findIndex((step) => step.id === 'controller')
-check(
-  'the intro-pad probe runs in controller-checks and fits inside the job',
-  introPadStep?.run === 'npm run verify:intro-pad' &&
-    Number.isInteger(introPadStep?.['timeout-minutes']) &&
-    introPadStep['timeout-minutes'] > 0 &&
-    introPadStep['timeout-minutes'] < devJob['timeout-minutes'] &&
-    introPadIndex > padIndex &&
-    String(introPadStep?.env?.JF_FAILURE_ARTIFACTS ?? '').includes('intro-pad-artifacts-attempt-') &&
-    gatesOnProbe(introPadUpload, 'intro-pad'),
-  introPadStep
-    ? `run ${introPadStep.run}, timeout ${introPadStep['timeout-minutes']}m of ${devJob['timeout-minutes']}m, step ${introPadIndex} after ${padIndex}, artifacts ${introPadStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}, upload ${introPadUpload ? condition(introPadUpload.step) : 'missing'}`
-    : 'step intro-pad is missing'
-)
+// Every probe the controller job runs after the pad suite shares one contract:
+// its command, a timeout inside the job budget, a position after the probe
+// whose build it depends on, the artifact it exports and the upload that keeps
+// its log when it fails.
+function controllerProbe({ name, id, run, after, artifact }) {
+  const steps = devJob?.steps ?? []
+  const step = steps.find((candidate) => candidate.id === id)
+  const upload = uploads.find((candidate) => artifactName(candidate.step) === `${artifact}-${ATTEMPT}`)
+  const index = steps.findIndex((candidate) => candidate.id === id)
+  const afterIndex = steps.findIndex((candidate) => candidate.id === after)
+  const timeout = step?.['timeout-minutes']
+  check(
+    name,
+    step?.run === run &&
+      Number.isInteger(timeout) &&
+      timeout > 0 &&
+      timeout < devJob['timeout-minutes'] &&
+      index > afterIndex &&
+      String(step?.env?.JF_FAILURE_ARTIFACTS ?? '').includes(`${artifact}-`) &&
+      gatesOnProbe(upload, id),
+    step
+      ? `run ${step.run}, timeout ${timeout}m of ${devJob['timeout-minutes']}m, step ${index} after ${after} ${afterIndex}, artifacts ${step?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}, upload ${upload ? condition(upload.step) : 'missing'}`
+      : `step ${id} is missing`
+  )
+}
+
+// The controller path to the intro dropdown has no keyboard equivalent, and the
+// ident's own behaviour — auto-advance, the skip paths, never painting in `off`,
+// playing once in `first-run` — is what the dropdown probes leave out. Both need
+// the dev build `verify:pad` makes, hence `controller` as their predecessor.
+controllerProbe({
+  name: 'the intro-pad probe runs in controller-checks and fits inside the job',
+  id: 'intro-pad',
+  run: 'npm run verify:intro-pad',
+  after: 'controller',
+  artifact: 'intro-pad-artifacts-attempt'
+})
+controllerProbe({
+  name: 'the intro probe runs in controller-checks and fits inside the job',
+  id: 'intro',
+  run: 'npm run verify:intro',
+  after: 'intro-pad',
+  artifact: 'intro-artifacts-attempt'
+})
 
 // The installed copy is the one thing CI could not prove: the installer job
 // builds a package, and nothing installed it. Pin the chain — the package the

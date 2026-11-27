@@ -264,7 +264,8 @@ settings only, empty artwork and backups). It passes `--user-data-dir` to a work
 if that path ever resolves inside the real `%APPDATA%/JOYFRAME`, and asserts the real `joyframe.db` size and mtime are
 unchanged before reporting success.
 
-The startup ident has its own repeatable coverage, and `npm run check` now runs it after the pad suite:
+The startup ident has its own repeatable coverage: `npm run check` runs it after the pad suite, and CI's controller job
+runs it on every push:
 `npm run verify:intro` proves it auto-advances untouched, is dismissed by a key press, a click or a controller button
 without activating the screen underneath, never paints in `off`, and plays exactly once in `first-run`;
 `npm run verify:intro-ui` drives the real Settings dropdown through `always → off → first-run → always`, restarting
