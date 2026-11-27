@@ -360,6 +360,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:intro-name-pad` | Boot the packaged app with an empty name and a virtual pad: the name step appears, a pad button advances to the ident, and real typing edits the name instead of skipping |
 | `npm run verify:installed-build` | Fail when `C:\Program Files\JOYFRAME` is not byte-for-byte the build in `release/win-unpacked` |
 | `npm run verify:installed` | Check that integrity, then drive the machine-wide copy (`JOYFRAME_EXE` overrides the exe): ident, skip without click-through, `off` |
+| `npm run verify:signing` | Prove the Azure signing path is either ready or cleanly unsigned: name any missing secrets, validate the endpoint shape, and check the enabler emits timestamped `azureSignOptions`; a half-set secret set fails. Runs in CI's no-gui checks on every push (~1 s) |
 | `npm run self-test` | Prove the suite's own guards still fail correctly: short check list, exit `2` on a missing prerequisite and on a busy port, unfinished-run reporting, stale package |
 | `npm run check` | Typecheck, guard self-test, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
 | `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` |

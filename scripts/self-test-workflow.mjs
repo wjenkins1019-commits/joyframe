@@ -94,6 +94,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'controller-checks',
     paths: ['.verify-logs/verify-intro-pad.log'],
     hidden: true
+  },
+  {
+    name: `signing-artifacts-attempt-${ATTEMPT}`,
+    label: 'the signing-readiness artifact keeps its name, path and hidden files',
+    job: 'no-gui-checks',
+    paths: ['.verify-logs/verify-signing.log'],
+    hidden: true
   }
 ]
 
@@ -114,6 +121,7 @@ const EXPECTED_CHECKS = [
   'the installed-copy job installs the built package and runs the installed probe',
   'the update-channel probe runs in no-gui-checks and fits inside the job',
   'the update-channel upload follows its probe and only runs on that probe failure',
+  'the signing probe runs in no-gui-checks, keeps its output and fits inside the job',
   'the installer-matrix probe runs per-user, uninstall and downgrade paths',
   'the installer-matrix upload follows its probe and only runs on that probe failure'
 ]
@@ -377,6 +385,25 @@ check(
   'the update-channel upload follows its probe and only runs on that probe failure',
   gatesOnProbe(channelUpload, 'update-channels'),
   channelUpload ? condition(channelUpload.step) : 'upload missing'
+)
+
+// Signing readiness is a second of static work that used to be proven only on
+// a tag push, so it runs on every push with its stdout captured for the upload.
+const signingStep = noGuiSteps.find((step) => step.id === 'signing')
+const signingUpload = uploads.find((upload) => artifactName(upload.step) === `signing-artifacts-attempt-${ATTEMPT}`)
+const signingRun = String(signingStep?.run ?? '')
+check(
+  'the signing probe runs in no-gui-checks, keeps its output and fits inside the job',
+  signingRun.includes('npm run verify:signing') &&
+    signingRun.includes('tee .verify-logs/verify-signing.log') &&
+    Number.isInteger(signingStep?.['timeout-minutes']) &&
+    signingStep['timeout-minutes'] > 0 &&
+    signingStep['timeout-minutes'] < noGuiJob['timeout-minutes'] &&
+    String(signingStep?.env?.JF_FAILURE_ARTIFACTS ?? '').includes('signing-artifacts-attempt-') &&
+    gatesOnProbe(signingUpload, 'signing'),
+  signingStep
+    ? `timeout ${signingStep['timeout-minutes']}m of ${noGuiJob['timeout-minutes']}m, step ${noGuiSteps.findIndex((s) => s.id === 'signing')} after update-channels ${noGuiSteps.findIndex((s) => s.id === 'update-channels')}, artifacts ${signingStep?.env?.JF_FAILURE_ARTIFACTS ?? '(unset)'}, upload ${signingUpload ? condition(signingUpload.step) : 'missing'}`
+    : 'step signing is missing'
 )
 
 // The all-users path alone is not a matrix: the per-user scope, the

@@ -100,6 +100,32 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
 
+      # The signing path is proven only when a tag push needs it, which is the
+      # worst time to discover that the enabler stopped emitting timestamped
+      # options or that a half-set secret set turns the build unsigned-but-
+      # looking-signed. It is a second of static work, so it runs on every push.
+      - name: Prove the Azure signing path is ready or cleanly unsigned
+        id: signing
+        timeout-minutes: 2
+        env:
+          JF_FAILURE_ARTIFACTS: signing-artifacts-attempt-${{ github.run_attempt }}
+        shell: bash
+        # The probe prints to stdout and writes no log of its own, so keep its
+        # output for the failure upload while preserving its exit status.
+        run: |
+          set -o pipefail
+          mkdir -p .verify-logs
+          npm run verify:signing 2>&1 | tee .verify-logs/verify-signing.log
+
+      - name: Upload signing artifacts
+        if: failure() && steps.signing.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signing-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-signing.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
   # The controller suite is the only coverage of the game page's back button:
   # the page has to appear without moving, and one immediate click has to close
   # it. Both are regressions that shipped once, so the suite runs on every push
