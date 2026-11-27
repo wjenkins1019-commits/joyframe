@@ -106,6 +106,9 @@ const PROFILE_CHECKS = {
     'that fallback names the emulator default as missing',
     'a game without a default method falls back to a disc on disk',
     'that fallback names the missing disc too',
+    'a set whose discs are all gone stays one card',
+    'a set whose discs are all gone shows the ROM missing badge',
+    'a set whose discs are all gone refuses the launch',
     'restore restarts the app on the restored library',
     'the restored snapshot brings back one entry per disc',
     'restore keeps a copy of the replaced library'
@@ -921,6 +924,55 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
       `${label}: that fallback names the missing disc too`,
       Boolean(orphanToast) && /Disc 2 \(default disc missing\)/.test(orphanToast),
       orphanToast ?? `no such toast: ${JSON.stringify(orphanToasts ?? [])}`
+    )
+
+    // Every disc of the set gone: the game is missing as a whole, but the card
+    // and its disc slots must survive, so the files coming back heal it rather
+    // than leaving three half-entries behind.
+    for (const index of [0, 1]) fs.rmSync(disc(index), { force: true })
+    const gone = await evaluate(`window.joyframe.scans.romFolders([${JSON.stringify(roms)}])`)
+    const goneGames = await evaluate(`window.joyframe.library
+      .list({ search: ${JSON.stringify(RECOVERY_TITLE)} })
+      .then((games) => games.map((game) => ({
+        title: game.title,
+        installed: game.installed,
+        missing: game.extra?.missingRom === true,
+        discs: (game.launchMethods ?? []).filter((method) => method.kind === 'rom').length
+      })))`)
+    const goneGame = Array.isArray(goneGames) ? goneGames[0] : null
+    check(
+      `${label}: a set whose discs are all gone stays one card`,
+      gone?.missing === 1 &&
+        (goneGames?.length ?? 0) === 1 &&
+        goneGame?.discs === 2 &&
+        goneGame?.missing === true &&
+        goneGame?.installed === false,
+      `rescan missing=${gone?.missing} errors=${JSON.stringify(gone?.errors)} games=${JSON.stringify(goneGames)}`
+    )
+
+    // Read the badge from a fresh renderer, as a user reopening the app would.
+    await evaluate('location.reload()').catch(() => null)
+    await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean, 30000)
+    const goneOpen = await openGame(RECOVERY_TITLE)
+    const goneBadge = await read(MISSING_BADGE, Boolean)
+    check(
+      `${label}: a set whose discs are all gone shows the ROM missing badge`,
+      Boolean(goneOpen) && goneBadge === 'ROM missing',
+      goneBadge ? `badge=${goneBadge}` : 'no badge'
+    )
+
+    fs.rmSync(record, { force: true })
+    const gonePlay = await clickPlay()
+    const goneToasts = await read(
+      TOASTS,
+      (lines) => Array.isArray(lines) && lines.some((line) => line.includes('ROM file not found')),
+      8000
+    )
+    const goneRefusal = (goneToasts ?? []).find((line) => line.includes('ROM file not found'))
+    check(
+      `${label}: a set whose discs are all gone refuses the launch`,
+      Boolean(gonePlay) && Boolean(goneRefusal) && goneRefusal.includes('(Disc 1)') && !fs.existsSync(record),
+      goneRefusal ?? `no refusal toast: ${JSON.stringify(goneToasts ?? [])}`
     )
 
     if (premerge.length !== 1) return
