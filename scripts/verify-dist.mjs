@@ -12,6 +12,9 @@
  *  - multidisc launch: a two-disc set the packaged scan must group into one
  *           card with a Disc row per disc, proving the default-disc switch
  *           changes the file the stub receives.
+ *  - multidisc recovery: a profile still in the old per-disc shape, proving the
+ *           fold snapshots the library first, a default disc that disappears
+ *           falls back to one on disk, and that snapshot restores from the app.
  *
  * Finish `npm run dist` first, then run:
  *
@@ -85,6 +88,21 @@ const PROFILE_CHECKS = {
     'Play launches the default disc',
     'Set default moves to the other disc',
     'Play launches the newly defaulted disc'
+  ],
+  'multidisc recovery': [
+    'the probe starts as one entry per disc',
+    'the rescan folds the per-disc entries into one game',
+    "the fold keeps both discs' playtime and notes",
+    'the fold saves a pre-merge snapshot first',
+    'the merged set shows as one card',
+    'the merged game has a Disc row per disc',
+    'Play launches the default disc',
+    'a missing default disc falls back to the disc on disk',
+    'the fallback launch says the default disc is missing',
+    'the disc coming back restores the default launch',
+    'restore restarts the app on the restored library',
+    'the restored snapshot brings back one entry per disc',
+    'restore keeps a copy of the replaced library'
   ]
 }
 
@@ -113,6 +131,68 @@ const ROM_RECORD = 'stub-args.json'
 const MULTI_TITLE = 'Multidisc Launch Probe'
 const MULTI_DISCS = [1, 2].map((disc) => path.join('roms', 'ps1', `${MULTI_TITLE} (Disc ${disc}).cue`))
 const MULTI_RECORD = 'stub-args.json'
+
+/** The recovery profile's set, seeded as one entry per disc by the older shape. */
+const RECOVERY_TITLE = 'Multidisc Recovery Probe'
+const RECOVERY_DISCS = [1, 2].map((disc) => path.join('roms', 'ps1', `${RECOVERY_TITLE} (Disc ${disc}).cue`))
+const RECOVERY_RECORD = 'stub-args.json'
+
+/** Every toast the renderer is showing; a launch result arrives as one. */
+const TOASTS = `[...document.querySelectorAll('[role="status"] p')].map((el) => el.textContent.trim())`
+
+/**
+ * The game page's per-disc launch rows: a Disc badge, a label and the cue file.
+ *
+ * Method rows are the only `div.rounded-lg` blocks naming a cue file, and the
+ * badge is the row header's first span; a bare text search would also catch the
+ * save-state slot's "Default" option elsewhere on the page.
+ */
+const DISC_ROWS = `(() => {
+  const detail = document.querySelector('[data-jf-detail="1"]')
+  if (!detail) return null
+  const rows = [...detail.querySelectorAll('div.rounded-lg')].filter((row) =>
+    row.querySelector('p')?.textContent.includes('.cue')
+  )
+  return rows.map((row) => {
+    const spans = [...row.querySelectorAll(':scope > div > span')]
+    return {
+      badge: spans[0]?.textContent.trim() ?? null,
+      label: spans[1]?.textContent.trim() ?? null,
+      file: row.querySelector('p')?.textContent.trim() ?? null
+    }
+  })
+})()`
+
+/** Clicks Play/Resume once the launcher has returned to idle and the button is enabled. */
+const clickPlayIn = (read) => () =>
+  read(
+    `(() => {
+      const detail = document.querySelector('[data-jf-detail="1"]')
+      const play = detail && [...detail.querySelectorAll('button')].find(
+        (entry) => ['Play', 'Resume'].includes(entry.textContent.trim()) && !entry.disabled
+      )
+      if (!play) return null
+      play.click()
+      return play.textContent.trim()
+    })()`,
+    Boolean
+  )
+
+/** The stub writes on process start; wait for that, not for a timer. */
+const waitForArgs = async (record) => {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    if (fs.existsSync(record)) {
+      try {
+        return JSON.parse(fs.readFileSync(record, 'utf8'))
+      } catch {
+        /* the stub is still writing */
+      }
+    }
+    await delay(100)
+  }
+  return null
+}
 
 /** The game page's ROM switch and its launch button, as rendered in the packaged build. */
 const ROM_DETAIL = `(() => {
@@ -351,36 +431,7 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
     return read(ROM_DETAIL, (state) => Boolean(state?.open))
   }
 
-  /** Clicks Play/Resume once the launcher has returned to idle and the button is enabled. */
-  const clickPlay = () =>
-    read(
-      `(() => {
-        const detail = document.querySelector('[data-jf-detail="1"]')
-        const play = detail && [...detail.querySelectorAll('button')].find(
-          (entry) => ['Play', 'Resume'].includes(entry.textContent.trim()) && !entry.disabled
-        )
-        if (!play) return null
-        play.click()
-        return play.textContent.trim()
-      })()`,
-      Boolean
-    )
-
-  /** The stub writes on process start; wait for that, not for a timer. */
-  const waitForArgs = async () => {
-    const deadline = Date.now() + 15_000
-    while (Date.now() < deadline) {
-      if (fs.existsSync(record)) {
-        try {
-          return JSON.parse(fs.readFileSync(record, 'utf8'))
-        } catch {
-          /* the stub is still writing */
-        }
-      }
-      await delay(100)
-    }
-    return null
-  }
+  const clickPlay = clickPlayIn(read)
 
   const opened = await openDetail()
   check(
@@ -393,7 +444,7 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
 
   fs.rmSync(record, { force: true })
   const directPlay = await clickPlay()
-  const directArgs = await waitForArgs()
+  const directArgs = await waitForArgs(record)
   check(
     `${label}: Play passes the ROM to the emulator`,
     Boolean(directPlay) &&
@@ -459,7 +510,7 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
 
   fs.rmSync(record, { force: true })
   const barePlay = await clickPlay()
-  const bareArgs = await waitForArgs()
+  const bareArgs = await waitForArgs(record)
   check(
     `${label}: opting out launches the emulator without the ROM`,
     Boolean(barePlay) && Array.isArray(bareArgs) && bareArgs.length === 0,
@@ -510,25 +561,7 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
     entry?.click()
     return Boolean(entry)
   })()`)
-  // Method rows are the only `div.rounded-lg` blocks naming a cue file; the
-  // badge is the row header's first span (a bare text search would also catch
-  // the save-state slot's "Default" option elsewhere on the page).
-  const readMethods = `(() => {
-    const detail = document.querySelector('[data-jf-detail="1"]')
-    if (!detail) return null
-    const rows = [...detail.querySelectorAll('div.rounded-lg')].filter((row) =>
-      row.querySelector('p')?.textContent.includes('.cue')
-    )
-    return rows.map((row) => {
-      const spans = [...row.querySelectorAll(':scope > div > span')]
-      return {
-        badge: spans[0]?.textContent.trim() ?? null,
-        label: spans[1]?.textContent.trim() ?? null,
-        file: row.querySelector('p')?.textContent.trim() ?? null
-      }
-    })
-  })()`
-  const methods = await read(readMethods, Boolean)
+  const methods = await read(DISC_ROWS, Boolean)
   const badges = (methods ?? []).map((entry) => entry.badge).sort()
   const labels = (methods ?? []).map((entry) => entry.label).sort()
   check(
@@ -538,40 +571,11 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
   )
   if (methods?.length !== 2) return
 
-  /** Clicks Play/Resume once the launcher has returned to idle and the button is enabled. */
-  const clickPlay = () =>
-    read(
-      `(() => {
-        const detail = document.querySelector('[data-jf-detail="1"]')
-        const play = detail && [...detail.querySelectorAll('button')].find(
-          (entry) => ['Play', 'Resume'].includes(entry.textContent.trim()) && !entry.disabled
-        )
-        if (!play) return null
-        play.click()
-        return play.textContent.trim()
-      })()`,
-      Boolean
-    )
-
-  /** The stub writes on process start; wait for that, not for a timer. */
-  const waitForArgs = async () => {
-    const deadline = Date.now() + 15_000
-    while (Date.now() < deadline) {
-      if (fs.existsSync(record)) {
-        try {
-          return JSON.parse(fs.readFileSync(record, 'utf8'))
-        } catch {
-          /* the stub is still writing */
-        }
-      }
-      await delay(100)
-    }
-    return null
-  }
+  const clickPlay = clickPlayIn(read)
 
   fs.rmSync(record, { force: true })
   const firstPlay = await clickPlay()
-  const firstArgs = await waitForArgs()
+  const firstArgs = await waitForArgs(record)
   check(
     `${label}: Play launches the default disc`,
     Boolean(firstPlay) &&
@@ -619,7 +623,7 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
 
   fs.rmSync(record, { force: true })
   const secondPlay = await clickPlay()
-  const secondArgs = await waitForArgs()
+  const secondArgs = await waitForArgs(record)
   check(
     `${label}: Play launches the newly defaulted disc`,
     Boolean(secondPlay) &&
@@ -628,6 +632,196 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
       path.resolve(secondArgs[0]) === path.resolve(disc(1)),
     `button=${secondPlay ?? 'missing'} stub=${JSON.stringify(secondArgs)}`
   )
+}
+
+/**
+ * The fold is only safe if it is reversible. This profile starts in the shape an
+ * older build produced — one entry per disc — so the packaged rescan has to fold
+ * them into one game and snapshot the library (`pre-merge`) before doing it. It
+ * then proves the discs survive a default disc disappearing, and finally
+ * restores that snapshot from the app's own restore path, which relaunches it.
+ */
+async function checkMultidiscRecovery({ label, app, attach, evaluate, read, check, profile }) {
+  // Absolute throughout: the seed wrote absolute paths, and the scan is asked
+  // for a root the app compares against them verbatim.
+  const dir = path.resolve(profile)
+  const record = path.join(dir, RECOVERY_RECORD)
+  const roms = path.join(dir, 'roms')
+  const disc = (index) => path.join(dir, RECOVERY_DISCS[index])
+  const backupDir = path.join(dir, 'backups')
+  const snapshots = (prefix) =>
+    fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((file) => file.startsWith(prefix)) : []
+  const listGames = `window.joyframe.library.list({ search: ${JSON.stringify(RECOVERY_TITLE)} }).then((games) =>
+    games.map((game) => ({ title: game.title, playtimeSeconds: game.playtimeSeconds, notes: game.notes }))
+  )`
+
+  let restored = null
+  try {
+    const legacy = await evaluate(listGames)
+    check(
+      `${label}: the probe starts as one entry per disc`,
+      Array.isArray(legacy) && legacy.length === 2,
+      Array.isArray(legacy)
+        ? `${legacy.length} entries: ${legacy.map((game) => game.title).join(' | ')}`
+        : 'library API unavailable'
+    )
+
+    const scanned = await evaluate(`window.joyframe.scans.romFolders([${JSON.stringify(roms)}])`)
+    check(
+      `${label}: the rescan folds the per-disc entries into one game`,
+      scanned?.added === 0 && (scanned?.errors?.length ?? 0) === 0,
+      `added=${scanned?.added} removed=${scanned?.removed} errors=${JSON.stringify(scanned?.errors)}`
+    )
+
+    const folded = await evaluate(listGames)
+    check(
+      `${label}: the fold keeps both discs' playtime and notes`,
+      (folded?.length ?? 0) === 1 && folded[0].playtimeSeconds === 900 && folded[0].notes === 'legacy note',
+      folded?.length === 1
+        ? `playtime=${folded[0].playtimeSeconds}s notes=${folded[0].notes || 'none'}`
+        : `${folded?.length ?? 0} entries`
+    )
+
+    // Written before the merge, so it holds the two entries the fold removed.
+    const premerge = snapshots('joyframe-pre-merge-')
+    check(
+      `${label}: the fold saves a pre-merge snapshot first`,
+      premerge.length === 1,
+      `${premerge.length} pre-merge snapshot(s): ${premerge.join(', ') || 'none'}`
+    )
+
+    // The merged game is what draws the Disc rows and the default badge.
+    await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean)
+    await evaluate(`document.querySelector('button[aria-label="Library"]')?.click()`)
+    const library = await read(viewProbe, (value) => value.view === 'library' && value.cards.length > 0)
+    check(
+      `${label}: the merged set shows as one card`,
+      library?.view === 'library' &&
+        library.cards.length === 1 &&
+        library.cards[0].startsWith(RECOVERY_TITLE),
+      `view=${library?.view} cards=${library ? library.cards.join(' | ') : 'none'}`
+    )
+    await evaluate(`(() => {
+      const entry = [...document.querySelectorAll('[data-game-id]')].find((card) =>
+        card.getAttribute('aria-label')?.startsWith(${JSON.stringify(RECOVERY_TITLE)})
+      )
+      entry?.click()
+      return Boolean(entry)
+    })()`)
+    const methods = await read(DISC_ROWS, Boolean)
+    const badges = (methods ?? []).map((row) => row.badge).sort()
+    check(
+      `${label}: the merged game has a Disc row per disc`,
+      (methods?.length ?? 0) === 2 && badges.join('|') === 'Default|Disc',
+      methods ? `badges=${badges.join(',')}` : 'game page did not open'
+    )
+    if (methods?.length !== 2) return
+
+    const clickPlay = clickPlayIn(read)
+    fs.rmSync(record, { force: true })
+    const defaultPlay = await clickPlay()
+    const defaultArgs = await waitForArgs(record)
+    check(
+      `${label}: Play launches the default disc`,
+      Boolean(defaultPlay) &&
+        Array.isArray(defaultArgs) &&
+        defaultArgs.length === 1 &&
+        path.resolve(defaultArgs[0]) === path.resolve(disc(0)),
+      `button=${defaultPlay ?? 'missing'} stub=${JSON.stringify(defaultArgs)}`
+    )
+
+    // The default disc disappears: the launch must fall back to the disc still
+    // on disk rather than fail on the dead path.
+    fs.rmSync(disc(0), { force: true })
+    fs.rmSync(record, { force: true })
+    const fellBackPlay = await clickPlay()
+    // The user-facing half of the fallback: the launch result names the missing
+    // default disc in a toast, which is the only place the description surfaces.
+    const fallbackToasts = await read(
+      TOASTS,
+      (lines) => Array.isArray(lines) && lines.some((line) => line.includes('(default disc missing)')),
+      8000
+    )
+    const fellBackArgs = await waitForArgs(record)
+    check(
+      `${label}: a missing default disc falls back to the disc on disk`,
+      Boolean(fellBackPlay) &&
+        Array.isArray(fellBackArgs) &&
+        fellBackArgs.length === 1 &&
+        path.resolve(fellBackArgs[0]) === path.resolve(disc(1)),
+      `button=${fellBackPlay ?? 'missing'} stub=${JSON.stringify(fellBackArgs)}`
+    )
+    const fallbackMessage = (fallbackToasts ?? []).find((line) => line.includes('(default disc missing)'))
+    check(
+      `${label}: the fallback launch says the default disc is missing`,
+      Boolean(fallbackMessage) && /Disc 2 \(default disc missing\)/.test(fallbackMessage),
+      fallbackMessage ?? `no such toast: ${JSON.stringify(fallbackToasts ?? [])}`
+    )
+
+    fs.writeFileSync(disc(0), 'JOYFRAME multi-disc recovery probe placeholder')
+    fs.rmSync(record, { force: true })
+    const backPlay = await clickPlay()
+    const backArgs = await waitForArgs(record)
+    check(
+      `${label}: the disc coming back restores the default launch`,
+      Boolean(backPlay) &&
+        Array.isArray(backArgs) &&
+        backArgs.length === 1 &&
+        path.resolve(backArgs[0]) === path.resolve(disc(0)),
+      `button=${backPlay ?? 'missing'} stub=${JSON.stringify(backArgs)}`
+    )
+
+    if (premerge.length !== 1) return
+
+    // Take the ROMs away before restarting: the relaunched app rescans on boot
+    // and, with the files gone, can only flag the entries — never fold them
+    // again — so the restored per-disc shape is what the second boot reads.
+    for (const index of [0, 1]) fs.rmSync(disc(index), { force: true })
+    const snapshot = path.join(backupDir, premerge[0])
+    const exited = new Promise((resolve) => app.once('exit', resolve))
+    await Promise.race([
+      evaluate(
+        `window.joyframe.system.restore(${JSON.stringify(snapshot)}).catch((error) => String(error))`
+      ).catch(() => null),
+      delay(10000)
+    ])
+    const stopped = await Promise.race([exited.then(() => true), delay(15000).then(() => false)])
+    const relaunched = stopped ? await attach() : null
+    check(
+      `${label}: restore restarts the app on the restored library`,
+      Boolean(relaunched),
+      stopped
+        ? relaunched
+          ? 'new window attached'
+          : 'no window after the restart'
+        : 'the app did not exit for the restart'
+    )
+    if (!relaunched) return
+
+    const rebuilt = await relaunched.session.read(listGames, (games) => Array.isArray(games) && games.length === 2, 30000)
+    check(
+      `${label}: the restored snapshot brings back one entry per disc`,
+      Array.isArray(rebuilt) &&
+        rebuilt.length === 2 &&
+        rebuilt.some((game) => game.title.endsWith('(Disc 1)') && game.playtimeSeconds === 600) &&
+        rebuilt.some((game) => game.title.endsWith('(Disc 2)') && game.playtimeSeconds === 300),
+      Array.isArray(rebuilt)
+        ? rebuilt.map((game) => `${game.title} ${game.playtimeSeconds}s`).join(' | ')
+        : 'library not readable'
+    )
+    const safety = snapshots('joyframe-before-restore-')
+    check(
+      `${label}: restore keeps a copy of the replaced library`,
+      safety.length === 1,
+      `${safety.length} before-restore snapshot(s): ${safety.join(', ') || 'none'}`
+    )
+    restored = relaunched.session
+  } finally {
+    // A relaunched instance is not our child, so it is asked to quit itself.
+    if (restored) {
+      await Promise.race([restored.evaluate('window.joyframe.system.quit()').catch(() => null), delay(4000)])
+    }
+  }
 }
 
 async function main() {
@@ -652,31 +846,65 @@ async function main() {
     if (seeded.status !== 0) return
     const expected = expectedViews(profile)
 
-    const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${path.resolve(profile)}`], {
-      stdio: appLog.stdio
-    })
+    const apps = []
+    const sessions = []
+
+    /** Attach to whatever window holds the debugging port. */
+    const attach = async () => {
+      const target = await findWindow(PORT)
+      if (!target) return null
+      const session = await createSession(target)
+      sessions.push(session)
+      return { target, session }
+    }
+
+    /**
+     * Launch the app on this profile and attach to it. A check that restores a
+     * backup attaches to the instance the app relaunches instead, since that one
+     * is not our child and cannot be killed by handle.
+     */
+    const boot = async ({ announce = true } = {}) => {
+      const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${path.resolve(profile)}`], {
+        stdio: appLog.stdio
+      })
+      apps.push(app)
+      const attached = await attach()
+      if (announce) {
+        check(
+          `${label}: packaged window loads from the asar bundle`,
+          Boolean(attached?.target.url.includes('app.asar')),
+          attached?.target.url ?? 'no window'
+        )
+      }
+      return attached ? { app, ...attached.session } : null
+    }
 
     try {
-      const target = await findWindow(PORT)
-      check(
-        `${label}: packaged window loads from the asar bundle`,
-        Boolean(target?.url.includes('app.asar')),
-        target?.url ?? 'no window'
-      )
-      if (!target) return
-
-      const { events, evaluate, read } = await createSession(target)
+      const first = await boot()
+      if (!first) return
       const readLayout = (surface) =>
-        read(layoutProbe(surface), (layout) => artState(layout) !== 'pending')
+        first.read(layoutProbe(surface), (layout) => artState(layout) !== 'pending')
 
-      await checks({ label, evaluate, read, readLayout, check, expected, profile })
-
-      problems.push(...consoleProblems(events, label))
+      await checks({
+        label,
+        app: first.app,
+        attach,
+        evaluate: first.evaluate,
+        read: first.read,
+        readLayout,
+        check,
+        expected,
+        profile
+      })
     } finally {
-      if (app.exitCode === null) {
-        const exited = new Promise((resolve) => app.once('exit', resolve))
-        app.kill()
-        await Promise.race([exited, delay(4000)])
+      for (const session of sessions) problems.push(...consoleProblems(session.events, label))
+      for (const session of sessions) session.close()
+      for (const app of apps) {
+        if (app.exitCode === null) {
+          const exited = new Promise((resolve) => app.once('exit', resolve))
+          app.kill()
+          await Promise.race([exited, delay(4000)])
+        }
       }
     }
   }
@@ -705,6 +933,12 @@ async function main() {
       profile: path.join(ROOT, 'multidisc-launch'),
       seeder: 'scripts/seed-multidisc-launch.ts',
       checks: checkMultidiscLaunch
+    })
+    await verifyProfile({
+      label: 'multidisc recovery',
+      profile: path.join(ROOT, 'multidisc-recovery'),
+      seeder: 'scripts/seed-multidisc-recovery.ts',
+      checks: checkMultidiscRecovery
     })
   } finally {
     removeDir(ROOT)
