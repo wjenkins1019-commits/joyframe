@@ -98,6 +98,8 @@ export interface GameExtra {
   saveStateMode?: 'none' | 'auto' | 'manual'
   /** Pass the ROM to the emulator even when its arguments never mention it. Default on. */
   launchRomDirectly?: boolean
+  /** Set by a rescan when the ROM file is no longer on disk; cleared when it returns. */
+  missingRom?: boolean
   previewEnabled?: boolean
   launchOverrides?: Record<string, string>
   coverChoice?: string
@@ -130,10 +132,12 @@ export interface Emulator {
   createdAt: string
   /** Start ROM launches straight into fullscreen (per-emulator opt-in). */
   fullscreen: boolean
-  /** Whether a verified fullscreen flag exists for this executable. */
+  /** Whether a fullscreen flag exists — verified preset or user-supplied. */
   fullscreenSupported: boolean
-  /** The flag(s) added, for display; '' when unsupported. */
+  /** The flag(s) actually added, for display; '' when unsupported. */
   fullscreenArgs: string
+  /** User override that replaces the built-in preset when non-empty. */
+  customFullscreenArgs: string
 }
 
 export interface EmulatorPlatformConfig {
@@ -317,6 +321,8 @@ export interface ScanResult {
   skipped: number
   /** Stale sidecar entries folded into surviving games (ROM scans). */
   removed: number
+  /** Library entries whose ROM file is gone (ROM scans). */
+  missing: number
   errors: string[]
   elapsedMs: number
 }

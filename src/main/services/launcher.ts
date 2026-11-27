@@ -81,6 +81,13 @@ function resolveEmulator(
   const emulator = rowToEmulator(row)
   if (!fs.existsSync(emulator.path)) throw new Error(`Emulator executable missing: ${emulator.path}`)
   if (!game.romPath) throw new Error('This game has no ROM file to launch.')
+  // Handing the emulator a path that is gone opens its empty window or fails
+  // silently, so say what happened instead of "launching" a dead file.
+  if (!fs.existsSync(game.romPath)) {
+    throw new Error(
+      `ROM file not found: ${game.romPath}. Move it back or rescan the folder — the game's playtime and metadata are kept.`
+    )
+  }
 
   const core = coreOverride || emulator.core || coreForPlatform(game.platformId)
   let corePath = core
@@ -109,7 +116,8 @@ function resolveEmulator(
 
   // A verified fullscreen preset for this emulator starts the game fullscreen.
   // Emulators without one get no extra arguments, so the launch is unchanged.
-  const fullscreenArgs = fullscreenArgsFor(emulator.path, emulator.fullscreen, args)
+  const customFullscreen = emulator.customFullscreenArgs ? splitArgs(emulator.customFullscreenArgs) : []
+  const fullscreenArgs = fullscreenArgsFor(emulator.path, emulator.fullscreen, args, customFullscreen)
   if (fullscreenArgs.length) args.unshift(...fullscreenArgs)
 
   return {

@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS emulators (
   save_state_dir TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  fullscreen INTEGER NOT NULL DEFAULT 1
+  fullscreen INTEGER NOT NULL DEFAULT 1,
+  fullscreen_args TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emulator_path ON emulators(path);
 
@@ -201,6 +202,7 @@ function migrateColumns(db: Db): void {
   ensureColumn(db, 'play_sessions', 'exe', "TEXT NOT NULL DEFAULT ''")
   ensureColumn(db, 'play_sessions', 'recovered', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'emulators', 'fullscreen', 'INTEGER NOT NULL DEFAULT 1')
+  ensureColumn(db, 'emulators', 'fullscreen_args', "TEXT NOT NULL DEFAULT ''")
 }
 
 function seedPlatforms(db: Db): void {

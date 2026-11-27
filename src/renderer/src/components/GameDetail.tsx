@@ -312,7 +312,13 @@ export function GameDetail(): React.JSX.Element | null {
                   )}
                   {running && <Badge tone="red">Running now</Badge>}
                   {isResume && <Badge tone="red">Continue playing</Badge>}
-                  {game.installed ? <Badge tone="green">Installed</Badge> : <Badge>Not installed</Badge>}
+                  {game.extra.missingRom ? (
+                    <Badge tone="amber">ROM missing</Badge>
+                  ) : game.installed ? (
+                    <Badge tone="green">Installed</Badge>
+                  ) : (
+                    <Badge>Not installed</Badge>
+                  )}
                   <Badge>{game.source === 'steam' ? 'Steam' : game.source === 'rom-scan' ? 'ROM collection' : game.source === 'pc-scan' ? 'PC scan' : 'Manual entry'}</Badge>
                   {game.favorite && (
                     <Badge tone="amber">

@@ -231,8 +231,8 @@ export function addEmulator(db: Db, input: Partial<Emulator>): Emulator {
   const argsTemplate = input.argsTemplate ?? catalogue?.argsTemplate ?? '"{rom}"'
   const id = uid()
   db.prepare(
-    `INSERT INTO emulators (id, name, path, detected, platform_ids, args_template, core, core_dir, save_state_dir, notes, created_at, fullscreen)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO emulators (id, name, path, detected, platform_ids, args_template, core, core_dir, save_state_dir, notes, created_at, fullscreen, fullscreen_args)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(path) DO UPDATE SET
        name = excluded.name, platform_ids = excluded.platform_ids, args_template = excluded.args_template,
        core = excluded.core, core_dir = excluded.core_dir, save_state_dir = excluded.save_state_dir,
@@ -251,7 +251,8 @@ export function addEmulator(db: Db, input: Partial<Emulator>): Emulator {
     nowIso(),
     // Known emulators start fullscreen; unsupported ones store the flag but
     // never use it, so adding an emulator stays a one-step action.
-    input.fullscreen === false ? 0 : 1
+    input.fullscreen === false ? 0 : 1,
+    input.customFullscreenArgs?.trim() ?? ''
   )
   const row = db.prepare('SELECT * FROM emulators WHERE path = ?').get(input.path) as Record<string, unknown>
   return rowToEmulator(row)
@@ -270,7 +271,8 @@ export function updateEmulator(db: Db, id: string, patch: Partial<Emulator>): Em
     coreDir: 'core_dir',
     saveStateDir: 'save_state_dir',
     notes: 'notes',
-    fullscreen: 'fullscreen'
+    fullscreen: 'fullscreen',
+    customFullscreenArgs: 'fullscreen_args'
   }
   for (const [key, column] of Object.entries(map)) {
     if (!(key in patch)) continue
@@ -334,7 +336,12 @@ export function testEmulator(db: Db, id: string, platformId?: string): { ok: boo
   }
   const sample = platformId ? `sample-${platformId}.rom` : 'game.rom'
   // Show the fullscreen preset too, so the test matches what a launch runs.
-  const fullscreen = fullscreenArgsFor(emulator.path, emulator.fullscreen, splitTemplateArgs(template))
+  const fullscreen = fullscreenArgsFor(
+    emulator.path,
+    emulator.fullscreen,
+    splitTemplateArgs(template),
+    splitTemplateArgs(emulator.customFullscreenArgs)
+  )
   const command = [emulator.path, ...fullscreen, template.replace('{rom}', sample).replace('{core}', core || '{core}')].join(' ')
   return {
     ok: true,

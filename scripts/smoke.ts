@@ -35,7 +35,13 @@ import {
 import { insertGame, queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
-import { scanPcFolders, scanRomFolders } from '../src/main/services/scanner.ts'
+import {
+  NON_ROM_EXTENSIONS,
+  ROM_EXTENSIONS,
+  scanPcFolders,
+  scanRomFolders
+} from '../src/main/services/scanner.ts'
+import { seededPlatforms } from '../src/main/services/platforms.ts'
 import { getSettings, migrateSecrets, publicSettings, updateSettings } from '../src/main/services/settings.ts'
 import { configureSecrets } from '../src/main/services/secrets.ts'
 import { detectSteam, importSteamGames, parseVdf } from '../src/main/services/steam.ts'
@@ -100,6 +106,9 @@ write(path.join(romRoot, 'ps1', 'Chrono Cross', 'Chrono Cross (Track 2).bin'), '
 // A single-game folder with two discs: one entry per disc.
 write(path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 1).cue'), 'cue', 256)
 write(path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 2).cue'), 'cue', 256)
+// Atari Jaguar dumps use a bare .rom extension; the platform claims it, so
+// the scan must accept it.
+write(path.join(romRoot, 'jaguar', 'Tempest 2000.rom'), 'rom', 2048)
 write(path.join(romRoot, 'bios', 'scph1001.bin'), 'bios', 512)
 write(path.join(romRoot, 'snes', 'notes.txt'), 'not a rom')
 
@@ -145,13 +154,30 @@ await check('PC scan picks the executable matching the folder name', () => {
 await check('ROM scan detects platforms from extensions and folder hints', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const byPlatform = new Map(romGames.map((game) => [game.title, game.platformId]))
-  assert.equal(romGames.length, 11)
+  assert.equal(romGames.length, 12)
   assert.equal(byPlatform.get('Chrono Trigger'), 'snes')
   assert.equal(byPlatform.get('Super Mario Bros'), 'nes')
   assert.equal(byPlatform.get('Pokemon Emerald'), 'gba')
   assert.equal(byPlatform.get('Shadow of the Colossus'), 'ps2')
   assert.equal(byPlatform.get('Final Fantasy VII (Disc 1)'), 'ps1')
   assert.equal(byPlatform.get('Metroid Dread'), 'switch')
+  assert.equal(byPlatform.get('Tempest 2000'), 'atarijaguar')
+})
+
+await check('every platform extension the scanner claims is accepted by its filter', () => {
+  const missing: string[] = []
+  for (const platform of seededPlatforms()) {
+    if (platform.native) continue
+    for (const ext of platform.extensions) {
+      if (NON_ROM_EXTENSIONS.has(ext)) continue
+      if (!ROM_EXTENSIONS.has(ext)) missing.push(`${platform.id}: .${ext}`)
+    }
+  }
+  assert.deepEqual(missing, [], `catalogue extensions the scan would skip: ${missing.join(', ')}`)
+  // Deliberate exclusions stay deliberate: they must not also be importable.
+  for (const ext of NON_ROM_EXTENSIONS) {
+    assert.equal(ROM_EXTENSIONS.has(ext), false, `.${ext} is both excluded and imported`)
+  }
 })
 
 const prefRoot = path.join(root, 'roms-format-pref')
@@ -246,6 +272,61 @@ await check('rescan folds stale sidecar entries into the surviving game', async 
   assert.equal(hades[0].notes, 'stale sidecar note')
   // The unrelated game sharing the folder is left alone.
   assert.equal(romGames.filter((game) => game.title === 'Hollow Knight').length, 1)
+})
+
+await check('rescan marks entries whose ROM is gone as missing, keeping history', async () => {
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  updateGameRecord(db, chrono.id, { playtimeSeconds: 900, notes: 'kept note', rating: 4 })
+  const romFile = path.join(romRoot, 'snes', 'Chrono Trigger (USA).sfc')
+  fs.rmSync(romFile)
+  try {
+    const result = await scanRomFolders(db, [romRoot], emit)
+    assert.equal(result.missing, 1)
+    const marked = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+    assert.equal(marked.installed, false)
+    assert.equal(marked.extra.missingRom, true)
+    assert.equal(marked.playtimeSeconds, 900)
+    assert.equal(marked.notes, 'kept note')
+    assert.equal(marked.rating, 4)
+
+    // Launching refuses the dead path with an actionable message.
+    assert.throws(() => buildLaunchCommand(db, marked), /ROM file not found/)
+
+    // The file coming back clears the flag on the next scan.
+    write(romFile, 'rom', 2048)
+    const again = await scanRomFolders(db, [romRoot], emit)
+    assert.equal(again.missing, 0)
+    const healed = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+    assert.equal(healed.installed, true)
+    assert.equal(healed.extra.missingRom, false)
+    assert.equal(healed.playtimeSeconds, 900)
+    assert.equal(buildLaunchCommand(db, healed).args.includes(healed.romPath), true)
+  } finally {
+    if (!fs.existsSync(romFile)) write(romFile, 'rom', 2048)
+  }
+})
+
+await check('a cancelled scan never marks entries missing', async () => {
+  // The file is genuinely gone, so an uncancelled scan would flag it. A
+  // cancelled scan must leave the library untouched instead of writing a
+  // half-finished verdict.
+  const marioFile = path.join(romRoot, 'nes', 'Super Mario Bros.nes')
+  const mario = queryGames(db, { search: 'Super Mario Bros' }, true)[0]
+  fs.rmSync(marioFile)
+  try {
+    const result = await scanRomFolders(db, [romRoot], emit, () => true)
+    assert.equal(result.missing, 0)
+    const untouched = queryGames(db, { search: 'Super Mario Bros' }, true)[0]
+    assert.equal(untouched.installed, true)
+    assert.notEqual(untouched.extra.missingRom, true)
+  } finally {
+    write(marioFile, 'rom', 2048)
+  }
+  // Put the library back to its healthy state for the checks that follow.
+  const healed = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(healed.missing, 0)
+  assert.equal(queryGames(db, { search: 'Super Mario Bros' }, true)[0].installed, true)
+  assert.ok(mario)
 })
 
 await check('Scan progress is reported', () => {
@@ -356,6 +437,101 @@ await check('companion flags ride along with the fullscreen switch', () => {
   const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
   const game = { ...chrono, platformId: 'ps3', emulatorId: rpcs3.id, launchArgs: '', launchMethods: [], extra: {} }
   assert.deepEqual(buildLaunchCommand(db, game).args, ['--no-gui', '--fullscreen', chrono.romPath])
+})
+
+await check('config-override presets keep their companion tokens together', () => {
+  const dolDir = path.join(root, 'emulators', 'Dolphin')
+  const dolPath = path.join(dolDir, 'Dolphin.exe')
+  write(dolPath, 'MZ', 1024)
+  const dolphin = addEmulator(db, { name: 'Dolphin', path: dolPath, platformIds: ['gamecube'], argsTemplate: '-e "{rom}"' })
+  assert.equal(dolPath, dolphin.path)
+  assert.equal(dolphin.fullscreenArgs, '-C Dolphin.Display.Fullscreen=True')
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, platformId: 'gamecube', emulatorId: dolphin.id, launchArgs: '', launchMethods: [], extra: {} }
+  assert.deepEqual(buildLaunchCommand(db, game).args, [
+    '-C',
+    'Dolphin.Display.Fullscreen=True',
+    '-e',
+    chrono.romPath
+  ])
+  // An unrelated -C override in the template must not suppress the preset.
+  const withOverride = { ...game, launchArgs: '-C Dolphin.Interface.DebugMode=False -e "{rom}"' }
+  assert.ok(buildLaunchCommand(db, withOverride).args.join(' ').includes('Dolphin.Display.Fullscreen=True'))
+})
+
+await check('a longer flag that merely starts with the preset is not mistaken for it', () => {
+  const raDir = path.join(root, 'emulators', 'RetroArchPrefix')
+  const raPath = path.join(raDir, 'retroarch.exe')
+  write(raPath, 'MZ', 1024)
+  const ra = addEmulator(db, {
+    name: 'RetroArch Prefix',
+    path: raPath,
+    platformIds: ['snes'],
+    argsTemplate: '--fullscreen-exclusive "{rom}"'
+  })
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: ra.id, launchArgs: '', launchMethods: [], extra: {} }
+  // The preset still applies: --fullscreen-exclusive is a different switch.
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', '--fullscreen-exclusive', chrono.romPath])
+})
+
+await check('newly verified single-flag emulators get their switch', () => {
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const cases: Array<[string, string[]]> = [
+    ['melonDS.exe', ['-f']],
+    ['Fusion.exe', ['-fullscreen']],
+    ['xenia_canary.exe', ['--fullscreen']]
+  ]
+  for (const [exe, expected] of cases) {
+    const dir = path.join(root, 'emulators', exe.replace(/\.exe$/i, ''))
+    const exePath = path.join(dir, exe)
+    write(exePath, 'MZ', 1024)
+    const emu = addEmulator(db, { name: exe, path: exePath, platformIds: ['snes'], argsTemplate: '"{rom}"' })
+    assert.equal(emu.fullscreenSupported, true, `${exe} has no preset`)
+    const game = { ...chrono, emulatorId: emu.id, launchArgs: '', launchMethods: [], extra: {} }
+    assert.deepEqual(buildLaunchCommand(db, game).args, [...expected, chrono.romPath], exe)
+  }
+})
+
+await check('custom fullscreen arguments enable an emulator with no preset', () => {
+  const j64Dir = path.join(root, 'emulators', 'Project64')
+  const j64Path = path.join(j64Dir, 'Project64.exe')
+  write(j64Path, 'MZ', 1024)
+  const project64 = addEmulator(db, {
+    name: 'Project64',
+    path: j64Path,
+    platformIds: ['n64'],
+    argsTemplate: '"{rom}"',
+    customFullscreenArgs: '--fullscreen'
+  })
+  assert.equal(project64.fullscreenSupported, true)
+  assert.equal(project64.fullscreenArgs, '--fullscreen')
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, platformId: 'n64', emulatorId: project64.id, launchArgs: '', launchMethods: [], extra: {} }
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', chrono.romPath])
+
+  // Clearing the override drops fullscreen support entirely again.
+  const cleared = updateEmulator(db, project64.id, { customFullscreenArgs: '' })
+  assert.equal(cleared.fullscreenSupported, false)
+  assert.deepEqual(buildLaunchCommand(db, game).args, [chrono.romPath])
+})
+
+await check('custom arguments replace the preset, and an empty field falls back to it', () => {
+  const raDir = path.join(root, 'emulators', 'RetroArchCustom')
+  const raPath = path.join(raDir, 'retroarch.exe')
+  write(raPath, 'MZ', 1024)
+  const ra = addEmulator(db, { name: 'RetroArch Custom', path: raPath, platformIds: ['snes'], argsTemplate: '"{rom}"' })
+  const chrono = queryGames(db, { search: 'Chrono Trigger' }, true)[0]
+  const game = { ...chrono, emulatorId: ra.id, launchArgs: '', launchMethods: [], extra: {} }
+
+  const custom = updateEmulator(db, ra.id, { customFullscreenArgs: '--fullscreen --maximize' })
+  assert.equal(custom.fullscreenArgs, '--fullscreen --maximize')
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', '--maximize', chrono.romPath])
+
+  // Empty field falls back to the verified preset.
+  const fallback = updateEmulator(db, ra.id, { customFullscreenArgs: '' })
+  assert.equal(fallback.fullscreenArgs, '--fullscreen')
+  assert.deepEqual(buildLaunchCommand(db, game).args, ['--fullscreen', chrono.romPath])
 })
 
 await check('emulators without a verified flag launch unchanged', () => {

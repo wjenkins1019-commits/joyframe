@@ -104,6 +104,20 @@ export function EmulatorsView(): React.JSX.Element {
     }
   }
 
+  const setFullscreen = async (emulator: Emulator, value: boolean): Promise<void> => {
+    try {
+      await api.emulators.update(emulator.id, { fullscreen: value })
+      await refresh()
+      notify(
+        value
+          ? `${emulator.name} will start games fullscreen.`
+          : `${emulator.name} will open games in its own window.`
+      )
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
   const pickExecutable = async (): Promise<void> => {
     const file = await api.system.pickFile([
       { name: 'Executables', extensions: ['exe', 'app', 'AppImage', 'sh'] }
@@ -221,9 +235,9 @@ export function EmulatorsView(): React.JSX.Element {
                       </p>
                     </div>
                     <div>
-                      <span className="text-white/35">Fullscreen preset</span>
+                      <span className="text-white/35">Fullscreen {emulator.customFullscreenArgs ? '(custom)' : 'preset'}</span>
                       <p className="break-all font-mono text-white/70">
-                        {emulator.fullscreenSupported ? emulator.fullscreenArgs : 'No verified flag — set it in the emulator'}
+                        {emulator.fullscreenSupported ? emulator.fullscreenArgs : 'None — add custom arguments to enable'}
                       </p>
                     </div>
                     <div className="sm:col-span-2">
@@ -238,11 +252,11 @@ export function EmulatorsView(): React.JSX.Element {
                       description={
                         emulator.fullscreenSupported
                           ? `Adds ${emulator.fullscreenArgs} before the ROM so the game opens fullscreen.`
-                          : 'No verified fullscreen flag for this emulator, so launches stay windowed and nothing extra is passed.'
+                          : 'No fullscreen flag is known for this emulator. Add custom fullscreen arguments in Edit to enable this.'
                       }
                       checked={emulator.fullscreenSupported && emulator.fullscreen}
                       disabled={!emulator.fullscreenSupported}
-                      onChange={(value) => void api.emulators.update(emulator.id, { fullscreen: value }).then(refresh)}
+                      onChange={(value) => void setFullscreen(emulator, value)}
                     />
                   </div>
 
@@ -386,6 +400,16 @@ export function EmulatorsView(): React.JSX.Element {
               </Field>
               <Field label="Core folder">
                 <Input value={editor.coreDir ?? ''} onChange={(event) => setEditor({ ...editor, coreDir: event.target.value })} placeholder="C:\Emulators\RetroArch\cores" />
+              </Field>
+              <Field
+                label="Custom fullscreen arguments"
+                hint="Optional. Replaces the built-in fullscreen preset for this emulator; leave empty to keep using it."
+              >
+                <Input
+                  value={editor.customFullscreenArgs ?? ''}
+                  onChange={(event) => setEditor({ ...editor, customFullscreenArgs: event.target.value })}
+                  placeholder="-fullscreen (or whatever this emulator accepts)"
+                />
               </Field>
               <Field label="Save state folder" hint="JOYFRAME only indexes saves here; it never modifies them.">
                 <Input

@@ -121,16 +121,22 @@ npm run smoke
   arguments never mention `{rom}` the ROM is appended anyway, so the emulator opens the game rather than an empty window;
   each game can switch that off with “Launch the ROM directly”, and Settings → Emulation sets the default for every game.
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
-  BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
+  BIOS/firmware exclusion, duplicate protection and automatic emulator assignment. Every extension a platform
+  advertises is importable — including bare `.rom` Jaguar dumps — and a smoke check keeps the platform catalogue and
+  the scanner's filter from drifting apart (only DOSBox `.conf`/`.bat` launch files are deliberately excluded).
 - One file per game: when a title exists in several formats in the same folder only the preferred one imports.
   A folder named after its game (ROM plus update/DLC/track sidecars) imports once — the disc sheet when there is
   one, otherwise the largest file — with one entry per disc for multi-disc sets.
   Rescanning folds stale sidecar entries from older scans into the surviving game, keeping playtime and metadata.
+  A ROM that is no longer on disk is marked **ROM missing** (never deleted — playtime, metadata and notes stay) and its
+  launch is refused with the path, while a file that returns clears the mark on the next scan.
 - Fullscreen launch presets: emulators with a verified fullscreen switch (RetroArch, PCSX2, DuckStation, PPSSPP, mGBA,
-  Snes9x, Ryujinx, Eden, Cemu, MAME, DOSBox-X, Stella, ares, BizHawk, Mednafen, xemu and more) open straight into the
+  Snes9x, Ryujinx, Eden, Cemu, MAME, DOSBox-X, Stella, ares, BizHawk, Mednafen, xemu, Dolphin, melonDS, Kega Fusion,
+  Xenia and more) open straight into the
   game. Companion flags are included where the emulator demands them (RPCS3 needs `--no-gui`). Each emulator has a
   per-entry switch in Settings → Emulators, and an emulator without a verified flag launches unchanged rather than
-  risking an unknown argument.
+  risking an unknown argument. Any emulator can set its own fullscreen arguments instead; a non-empty custom field
+  replaces the built-in preset, and clearing it falls back to the preset.
   Each platform's order is editable in Settings → Library & scanning → ROM format preference (defaults: Switch
   `.xci` → `.nsp` → `.nsz`, PS2 `.chd` → `.iso`, disc sets keep `.m3u`/`.cue` over `.bin`, archives sort last).
   The scan reports how many duplicate formats it skipped.

@@ -4,7 +4,17 @@ import type { Emulator, Game, ScanProgress, ScanResult } from '../../shared/type
 import type { Db } from './db.ts'
 import { defaultRomOrder } from '../../shared/rom-formats.ts'
 import { detectPlatform, platformById } from './platforms.ts'
-import { findBySource, findDuplicate, insertGame, mergeGames, nowIso, rowToEmulator, rowToGame, uid } from './repo.ts'
+import {
+  findBySource,
+  findDuplicate,
+  insertGame,
+  mergeGames,
+  nowIso,
+  rowToEmulator,
+  rowToGame,
+  uid,
+  updateGameRecord
+} from './repo.ts'
 
 export type ProgressEmitter = (progress: ScanProgress) => void
 
@@ -83,12 +93,15 @@ async function walk(
   }
 }
 
+const TITLE_EXTENSIONS =
+  /\.(exe|iso|bin|cue|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|jag|rom|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso|nsp|nsz|xci|wud|wux|rpx|gcz|wad|cci|pkg|dat|dosz|gz|dec)$/i
+
 export function cleanTitle(raw: string): string {
-  return raw
-    .replace(
-      /\.(exe|iso|bin|cue|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso|nsp|nsz|xci|wud|wux|rpx|gcz|wad|cci|pkg|dat)$/i,
-      ''
-    )
+  // Loop, so a compound name like `Foo.iso.gz` loses every stacked extension
+  // instead of keeping `.iso` in the title.
+  let title = raw
+  while (TITLE_EXTENSIONS.test(title)) title = title.replace(TITLE_EXTENSIONS, '')
+  return title
     .replace(/\[(.*?)\]/g, ' ')
     .replace(/\((USA|Europe|Japan|World|Rev [^)]*|v[0-9.]+|En|Fr|De|Es|It|Beta|Proto|Demo)[^)]*\)/gi, ' ')
     .replace(/[_.]+/g, ' ')
@@ -231,7 +244,7 @@ export async function scanPcFolders(
     message: `PC scan complete — ${added} added, ${updated} updated, ${skipped} already in library`,
     errors
   })
-  return { kind: 'pc', added, updated, skipped, removed: 0, errors, elapsedMs: Date.now() - started }
+  return { kind: 'pc', added, updated, skipped, removed: 0, missing: 0, errors, elapsedMs: Date.now() - started }
 }
 
 const ARCHIVE_EXTENSIONS = new Set(['zip', '7z'])
@@ -272,15 +285,33 @@ function variantKey(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
-const ROM_EXTENSIONS = new Set([
+/**
+ * Every extension the scanner imports. The platform catalogue's `extensions`
+ * mostly mirrors this list, and a smoke check keeps the two in step — a format
+ * only in the catalogue would never reach the import step.
+ */
+export const ROM_EXTENSIONS = new Set([
   'nes', 'unf', 'fds', 'sfc', 'smc', 'fig', 'swc', 'n64', 'z64', 'v64', 'ndd',
   'gcm', 'rvz', 'gcz', 'dol', 'wbfs', 'wad', 'wud', 'wux', 'rpx', 'nsp', 'nsz', 'xci',
   'gb', 'gbc', 'gba', 'agb', 'nds', 'dsi', '3ds', 'cci', 'cia',
-  'iso', 'chd', 'cso', 'pbp', 'pkg', 'vpk', 'xiso', 'xex',
+  'iso', 'chd', 'cso', 'pbp', 'pkg', 'vpk', 'xiso', 'xex', 'gz', 'dec',
   'gdi', 'cdi', 'dat', 'md', 'gen', 'smd', '32x', 'sms', 'gg',
-  'a26', 'a78', 'j64', 'jag', 'pce', 'sgx', 'd64', 't64', 'crt', 'prg', 'tap',
-  'zip', '7z', 'ccd', 'm3u', 'cue', 'bin', 'img'
+  'a26', 'a78', 'j64', 'jag', 'rom', 'pce', 'sgx', 'd64', 't64', 'crt', 'prg', 'tap',
+  'dosz', 'zip', '7z', 'ccd', 'm3u', 'cue', 'bin', 'img'
 ])
+
+/**
+ * Platform extensions that are not game files, so the scan skips them on
+ * purpose: DOSBox `.conf` and `.bat` are launch configurations, not ROMs.
+ * Kept explicit so the catalogue/scan consistency check can allow them.
+ */
+export const NON_ROM_EXTENSIONS = new Set(['conf', 'bat'])
+
+/** True when a path's extension is one the ROM scanner imports. */
+export function isRomFile(file: string): boolean {
+  const ext = path.extname(file).slice(1).toLowerCase()
+  return ROM_EXTENSIONS.has(ext)
+}
 
 export async function scanRomFolders(
   db: Db,
@@ -296,6 +327,8 @@ export async function scanRomFolders(
   let updated = 0
   let skipped = 0
   let removed = 0
+  let missing = 0
+  let restored = 0
 
   emit({ phase: 'start', kind: 'rom', scanned: 0, found: 0, message: 'Scanning ROM folders…' })
 
@@ -313,8 +346,7 @@ export async function scanRomFolders(
       6,
       (entry) => {
         scanned += 1
-        const ext = path.extname(entry.file).slice(1).toLowerCase()
-        if (!ROM_EXTENSIONS.has(ext)) return
+        if (!isRomFile(entry.file)) return
         const lower = entry.file.toLowerCase()
         if (lower.includes('.uninstall') || lower.includes('bios') || lower.includes('firmware')) return
         const title = cleanTitle(path.basename(entry.file))
@@ -490,6 +522,33 @@ export async function scanRomFolders(
       mergeGames(db, survivorGame.id, stale.id)
       removed += 1
     }
+
+    // Entries whose ROM file is gone are marked missing — never deleted — so
+    // playtime, metadata and notes survive a moved folder or unplugged drive.
+    // The check runs against the filesystem, so an entry the scan skipped
+    // (e.g. an ambiguous platform) is not mistaken for a missing one, and a
+    // file that comes back clears the flag on the next rescan.
+    // A cancelled scan only saw part of the tree: flagging on that view would
+    // mark everything it never reached as missing.
+    const alive = new Set(
+      (db.prepare(`SELECT id FROM games WHERE source = 'rom-scan'`).all() as { id: string }[]).map((row) => row.id)
+    )
+    for (const row of shouldCancel?.() ? [] : library) {
+      const game = rowToGame(row)
+      if (!alive.has(game.id)) continue // folded into a survivor above
+      const file = game.sourceId || game.romPath
+      if (!file) continue
+      if (!file.toLowerCase().startsWith(rootPrefix) && !game.installDir.toLowerCase().startsWith(rootPrefix)) continue
+      const onDisk = fs.existsSync(file)
+      const flagged = Boolean(game.extra.missingRom)
+      if (!onDisk && !flagged) {
+        updateGameRecord(db, game.id, { installed: false, extra: { ...game.extra, missingRom: true } })
+        missing += 1
+      } else if (onDisk && flagged) {
+        updateGameRecord(db, game.id, { installed: true, extra: { ...game.extra, missingRom: false } })
+        restored += 1
+      }
+    }
     // Release memory between roots.
     pending = []
   }
@@ -499,10 +558,10 @@ export async function scanRomFolders(
     kind: 'rom',
     scanned,
     found: added,
-    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats and sidecar files kept out)${removed > 0 ? `, ${removed} stale sidecar${removed === 1 ? '' : 's'} folded into surviving games` : ''}`,
+    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats and sidecar files kept out)${removed > 0 ? `, ${removed} stale sidecar${removed === 1 ? '' : 's'} folded into surviving games` : ''}${missing > 0 ? `, ${missing} ROM${missing === 1 ? '' : 's'} missing from disk` : ''}${restored > 0 ? `, ${restored} back on disk` : ''}`,
     errors
   })
-  return { kind: 'rom', added, updated, skipped, removed, errors, elapsedMs: Date.now() - started }
+  return { kind: 'rom', added, updated, skipped, removed, missing, errors, elapsedMs: Date.now() - started }
 }
 
 /** Best-effort enrichment of ROM metadata from the filename. */

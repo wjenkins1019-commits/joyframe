@@ -103,6 +103,7 @@ export function rowToPlatform(row: Record<string, unknown>): Platform {
 
 export function rowToEmulator(row: Record<string, unknown>): Emulator {
   const preset = fullscreenPresetFor(String(row.path ?? ''))
+  const custom = String(row.fullscreen_args ?? '').trim()
   return {
     id: String(row.id),
     name: String(row.name),
@@ -117,8 +118,9 @@ export function rowToEmulator(row: Record<string, unknown>): Emulator {
     createdAt: String(row.created_at ?? ''),
     // A row written before the column existed counts as on, like the default.
     fullscreen: row.fullscreen === undefined || row.fullscreen === null ? true : Number(row.fullscreen) === 1,
-    fullscreenSupported: Boolean(preset),
-    fullscreenArgs: preset ? preset.args.join(' ') : ''
+    customFullscreenArgs: custom,
+    fullscreenSupported: Boolean(custom || preset),
+    fullscreenArgs: custom || (preset ? preset.args.join(' ') : '')
   }
 }
 
