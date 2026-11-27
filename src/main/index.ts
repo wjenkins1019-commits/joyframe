@@ -72,9 +72,23 @@ async function bootstrap(): Promise<void> {
   migrateSecrets(database)
   settingsState = getSettings(database)
 
+  // Set when the library minimizes itself for a launch, so only a launch
+  // restores the window — never a state change the user didn't start from play.
+  let minimizedForPlay = false
   launcher = new Launcher(database, {
     emit: (state: PlayState) => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('play:state', state)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('play:state', state)
+        if ((state.state === 'launching' || state.state === 'running') && state.gameId) {
+          if (settingsState?.minimizeWhilePlaying !== false && !mainWindow.isMinimized()) {
+            mainWindow.minimize()
+            minimizedForPlay = true
+          }
+        } else if (state.state === 'idle' && minimizedForPlay) {
+          minimizedForPlay = false
+          if (mainWindow.isMinimized()) mainWindow.restore()
+        }
+      }
     },
     openExternal: async (url: string) => {
       if (!/^(https?:|steam:|mailto:)/i.test(url)) throw new Error('Blocked unsupported protocol')

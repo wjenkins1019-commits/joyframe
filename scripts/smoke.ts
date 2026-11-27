@@ -623,6 +623,7 @@ await check('Settings persist across reads', () => {
 })
 
 await check('Startup intro preference persists with a sane default', () => {
+  assert.equal(getSettings(db).minimizeWhilePlaying, true)
   assert.equal(getSettings(db).introMode, 'always')
   updateSettings(db, { introMode: 'first-run' })
   assert.equal(getSettings(db).introMode, 'first-run')

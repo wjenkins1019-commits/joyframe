@@ -419,6 +419,12 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             checked={draft.launchRomsDirectly}
             onChange={(value) => commit({ launchRomsDirectly: value })}
           />
+          <Toggle
+            label="Hide the library while playing"
+            description="On: JOYFRAME minimizes itself when a game launches and comes back when the game stops, so all you see is the game. The emulator still shows its own window — add its fullscreen flag to your launch arguments for a seamless start."
+            checked={draft.minimizeWhilePlaying}
+            onChange={(value) => commit({ minimizeWhilePlaying: value })}
+          />
           <p className="mt-3 text-[10px] leading-relaxed text-white/30">
             This is the default for every ROM game. A per-game switch on the game page always wins.
           </p>

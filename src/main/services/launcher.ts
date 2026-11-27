@@ -301,7 +301,10 @@ export class Launcher {
           cwd: resolved.cwd && fs.existsSync(resolved.cwd) ? resolved.cwd : undefined,
           detached: true,
           stdio: 'ignore',
-          windowsHide: false
+          // No console window: the emulator runs in the background and only
+          // the game itself appears. GUI emulators show their own window;
+          // pair this with fullscreen launch arguments for a seamless start.
+          windowsHide: true
         })
       } catch (error) {
         abortSession(this.db, sessionId)

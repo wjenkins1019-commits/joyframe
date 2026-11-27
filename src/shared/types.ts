@@ -197,6 +197,8 @@ export interface AppSettings {
   playerName: string
   /** Global default for handing a ROM to the emulator; per-game extras override it. */
   launchRomsDirectly: boolean
+  /** Minimize the library while a game runs so only the game is visible. */
+  minimizeWhilePlaying: boolean
   consoleModeOnStartup: boolean
   /** Whether the animated startup ident plays every launch, once, or never. */
   introMode: 'always' | 'first-run' | 'off'
@@ -244,6 +246,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeAccent: '#D71935',
   playerName: '',
   launchRomsDirectly: true,
+  minimizeWhilePlaying: true,
   consoleModeOnStartup: false,
   introMode: 'always',
   autoPreviews: true,
