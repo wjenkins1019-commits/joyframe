@@ -241,11 +241,16 @@ Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
   present. Adding a column to `db.ts` without a migration fails this check.
 
 The packaged `release/win-unpacked/JOYFRAME.exe` was also booted in throwaway `--user-data-dir` profiles, and this is
-repeatable: `npm run verify:dist` seeds three disposable profiles, boots the packaged app on each, and checks what
+repeatable: `npm run verify:dist` seeds five disposable profiles, boots the packaged app on each, and checks what
 renders — the 15-game demo library (home rows, hero, decoded artwork, Console Mode shelves), a **1.0.0 profile**
 built from `scripts/fixtures/schema-1.0.0.sql` (home rows plus the Library view, with the old hidden game still
-hidden), and a **ROM-launch profile** whose stub emulator records the argv it receives before and after the per-game
-switch is saved off. It fails on any renderer console error and removes all three profiles afterwards. `npm run verify:dist-pad`
+hidden), a **ROM-launch profile** whose stub emulator records the argv it receives before and after the per-game
+switch is saved off, a **multi-disc profile** where one two-disc set must arrive as a single card with a Disc row per
+disc and switching the default disc must change the argv the stub receives, and a **recovery profile** that starts
+from the per-disc shape an older build wrote (`scripts/seed-multidisc.ts --legacy`), so the packaged rescan has to
+fold it and snapshot the library (`pre-merge`) first; it then checks all three `(default disc missing)` fallbacks by
+the message the user sees and restores that snapshot through the app's own restore path, which relaunches it. It
+fails on any renderer console error and removes all five profiles afterwards. `npm run verify:dist-pad`
 runs the virtual-gamepad suite against the same packaged exe on a seeded demo profile, covering controller navigation,
 Console Mode and modal back-stack behaviour in the shipped build rather than only dev Electron. Both packaged checks
 compare the contents of `release/win-unpacked/resources/app.asar` with the current `out/` by SHA-256 and refuse to run
@@ -341,7 +346,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run typecheck` | TypeScript checks for main and renderer |
 | `npm run smoke` | Backend integration smoke test |
 | `npm run verify:pad` | Drive the controller suite in dev Electron with a virtual pad |
-| `npm run verify:dist` | Boot the packaged build against seeded demo, 1.0.0 and ROM-launch profiles; check Home, Console Mode, the upgraded library, and the ROM switch's saved launch behaviour through a stub emulator |
+| `npm run verify:dist` | Boot the packaged build against seeded demo, 1.0.0, ROM-launch, multi-disc and multi-disc recovery profiles; check Home, Console Mode, the upgraded library, the ROM switch, Disc rows and default-disc switching, the fold's `pre-merge` snapshot and the restore path, and every `(default disc missing)` message through a stub emulator |
 | `npm run verify:dist-pad` | Run the controller suite against the packaged build on a seeded demo profile |
 | `npm run verify:first-run` | Boot the packaged build on a throwaway empty profile; check the welcome screen, empty library and fresh database |
 | `npm run verify:freshness` | Exercise the packaged-build content guard with real fixture archives, without touching `release/` |

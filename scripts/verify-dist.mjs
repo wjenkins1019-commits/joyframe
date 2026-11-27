@@ -79,7 +79,9 @@ const PROFILE_CHECKS = {
     'the switch turns off before saving',
     'Save profile reports the switch was saved',
     'the saved switch survives reopening the game page',
-    'opting out launches the emulator without the ROM'
+    'opting out launches the emulator without the ROM',
+    'a game whose ROM is gone shows the ROM missing badge',
+    'launching a game whose ROM is gone is refused by name'
   ],
   'multidisc launch': [
     'packaged scan imports the set as one game',
@@ -144,6 +146,14 @@ const RECOVERY_RECORD = 'stub-args.json'
 /** A second game in the same profile: one live disc method, deliberately no default. */
 const ORPHAN_TITLE = 'Orphan Disc Probe'
 const ORPHAN_DISCS = [1, 2].map((disc) => path.join('orphan', `${ORPHAN_TITLE} (Disc ${disc}).cue`))
+
+/** The `ROM missing` badge on the game page, matched on its exact text. */
+const MISSING_BADGE = `(() => {
+  const detail = document.querySelector('[data-jf-detail="1"]')
+  if (!detail) return null
+  const badge = [...detail.querySelectorAll('span')].find((el) => el.textContent.trim() === 'ROM missing')
+  return badge ? 'ROM missing' : null
+})()`
 
 /** Every toast the renderer is showing; a launch result arrives as one. */
 const TOASTS = `[...document.querySelectorAll('[role="status"] p')].map((el) => el.textContent.trim())`
@@ -524,6 +534,39 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
     Boolean(barePlay) && Array.isArray(bareArgs) && bareArgs.length === 0,
     `button=${barePlay ?? 'missing'} stub=${JSON.stringify(bareArgs)}`
   )
+
+  // The state a user meets when the file is gone: the badge on the game page and
+  // a launch that refuses rather than opening the emulator on a dead path.
+  const roms = path.resolve(profile, 'roms')
+  fs.rmSync(rom, { force: true })
+  const rescan = await evaluate(`window.joyframe.scans.romFolders([${JSON.stringify(roms)}])`)
+  // The page on screen was rendered before the rescan; reload so the badge is
+  // read from the database rather than from a stale renderer cache.
+  await evaluate('location.reload()').catch(() => null)
+  await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean, 30000)
+  const missing = await openDetail()
+  const badge = await read(MISSING_BADGE, Boolean)
+  check(
+    `${label}: a game whose ROM is gone shows the ROM missing badge`,
+    Boolean(missing?.switch) && badge === 'ROM missing' && rescan?.missing === 1,
+    `${badge ? `badge=${badge}` : 'no badge'} rescan missing=${rescan?.missing} errors=${JSON.stringify(rescan?.errors)}`
+  )
+
+  fs.rmSync(record, { force: true })
+  const refusedPlay = await clickPlay()
+  const refusalToasts = await read(
+    TOASTS,
+    (lines) => Array.isArray(lines) && lines.some((line) => line.includes('ROM file not found')),
+    8000
+  )
+  const refusal = (refusalToasts ?? []).find((line) => line.includes('ROM file not found'))
+  // Nothing may reach the emulator: the stub writes only when it is started.
+  check(
+    `${label}: launching a game whose ROM is gone is refused by name`,
+    Boolean(refusedPlay) && Boolean(refusal) && refusal.includes(ROM_GAME) && !fs.existsSync(record),
+    refusal ?? `no refusal toast: ${JSON.stringify(refusalToasts ?? [])}`
+  )
+  fs.rmSync(record, { force: true })
 }
 
 /**
