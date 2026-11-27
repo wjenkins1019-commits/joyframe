@@ -192,27 +192,57 @@ console.log('pad left — value back to:', JSON.stringify(afterLeft))
 if (afterLeft !== before) throw new Error('d-pad left did not restore the previous option')
 
 // ---- 2. pad-only walk to Settings and its Startup intro dropdown ----
+// Leave the content column for the sidebar. A focused <select> keeps the d-pad
+// for its own options — that is how the dropdown was stepped above — so a
+// select is left with ArrowUp first, and the rest of the column with the pad.
 let sidebar = await evaluate(focused)
-for (let step = 0; step < 12 && sidebar && sidebar.x > 130; step++) {
-  if (sidebar.tag === 'SELECT') await key('ArrowUp', 'ArrowUp', 38)
-  else await key('ArrowLeft', 'ArrowLeft', 37)
+for (let step = 0; step < 20 && sidebar && sidebar.x > 130; step++) {
+  // Pad B drops a focused field (a select keeps every direction press for its
+  // own options), then the pad walks left out of the content column.
+  if (sidebar.tag === 'SELECT') await pad(1)
+  else await pad(14)
   sidebar = await evaluate(focused)
 }
+console.log('highlight after leaving the content column:', JSON.stringify(sidebar))
 if (!sidebar) throw new Error('lost the highlight while reaching the sidebar')
 
-for (let step = 0; step < 30; step++) {
+// A shorter window can leave Settings below the sidebar's fold, where no d-pad
+// press can reach it, so centre it first and walk to it in two dimensions:
+// the highlight has to close the gap to the sidebar before it can move down it.
+await evaluate(`(() => {
+  const el = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Settings')
+  el?.scrollIntoView({ block: 'center' })
+  return Boolean(el)
+})()`)
+await delay(300)
+
+for (let step = 0; step < 60; step++) {
   const state = await evaluate(focused)
   if (state?.label === 'Settings') break
+  if (!state) break
+  // B drops a focused <select>; without it every direction press would keep
+  // changing the dropdown's value instead of moving the highlight.
+  if (state.tag === 'SELECT') {
+    await pad(1)
+    continue
+  }
   const target = await evaluate(`(() => {
     const el = [...document.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Settings')
+    if (!el) return null
     const r = el.getBoundingClientRect()
-    return { y: r.top + r.height / 2 }
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
   })()`)
-  const direction = state && state.y > target.y ? 12 : 13
+  if (!target) throw new Error('the Settings item is not on screen')
+  // Close the horizontal gap first — a narrower window keeps the highlight in
+  // the content column for longer — then the vertical one.
+  const direction = state.x > target.x + 80 ? 14 : state.y > target.y ? 12 : 13
   await pad(direction)
 }
 const onSettings = await evaluate(`document.querySelector('[data-nav-focus]')?.getAttribute('aria-label') === 'Settings'`)
-if (!onSettings) throw new Error('pad navigation never reached the Settings item')
+if (!onSettings) {
+  const state = await evaluate(focused)
+  throw new Error(`pad navigation never reached the Settings item — highlight=${JSON.stringify(state)}`)
+}
 await pad(0)
 const openedSettings = await waitFor(`document.querySelector('main[data-jf-view]')?.getAttribute('data-jf-view') === 'settings'`)
 console.log('pad A opened Settings:', openedSettings)
