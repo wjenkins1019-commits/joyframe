@@ -494,10 +494,10 @@ export async function connect(debuggerUrl) {
   const events = []
   let nextId = 0
   let closed = null
-  // Set when the probe asks for the close. Every probe closes its session as it
-  // tears down, and a probe may abandon a read that is still in flight, so a
+  // Why the probe asked for this close, when it did. Every probe closes its own
+  // session as it tears down, and some ask the app to quit or restart, so a
   // close we asked for is the ordinary end of a run — not a lost connection.
-  let closing = false
+  let closing = null
 
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)
@@ -517,8 +517,9 @@ export async function connect(debuggerUrl) {
     if (!pending.size) return
     const inFlight = pending.size
     // Name the cause on stderr too: probes that tolerate transient reload errors
-    // catch the rejection, and the reason would be lost with it.
-    fs.writeSync(2, `\n[cdp] ${closed} while ${inFlight} command(s) were in flight.\n`)
+    // catch the rejection, and the reason would be lost with it. A close the
+    // probe asked for names that instead of claiming the app went away.
+    fs.writeSync(2, `\n[cdp] ${closing ?? closed} while ${inFlight} command(s) were in flight.\n`)
     // Only an abnormal close is announced: the probe still needs the connection
     // (it has not reported its result) and did not ask for the close. Every
     // probe closes its own session as it tears down and some ask the app to quit
@@ -549,10 +550,10 @@ export async function connect(debuggerUrl) {
      * or a restore that restarts the app never gets a reply to that call.
      */
     expectClose: () => {
-      closing = true
+      closing = 'the probe asked the app to quit or restart'
     },
     close: () => {
-      closing = true
+      closing = 'the probe closed the session itself'
       socket.close()
     },
     call: (method, params = {}, timeout = CALL_TIMEOUT_MS) => {

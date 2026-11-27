@@ -209,9 +209,8 @@ const CASES = [
     env: { GITHUB_ACTIONS: 'true' },
     stdout: ['probe closed mid-command: the app closed the DevTools connection'],
     stdoutAbsent: ['::warning'],
-    stderr: [
-      '[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
-    ],
+    stderr: ['[cdp] the probe closed the session itself while 1 command(s) were in flight.'],
+    stderrAbsent: ['the app closed the DevTools connection'],
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
   },
   {
@@ -221,9 +220,7 @@ const CASES = [
     env: { GITHUB_ACTIONS: '' },
     stdout: ['probe closed mid-command: the app closed the DevTools connection'],
     stdoutAbsent: ['::warning'],
-    stderr: [
-      '[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
-    ]
+    stderr: ['[cdp] the probe closed the session itself while 1 command(s) were in flight.']
   },
   {
     // verify-dist asks the app to quit or restart, so the app closes the socket
@@ -234,6 +231,8 @@ const CASES = [
     env: { GITHUB_ACTIONS: 'true' },
     stdout: ['app closed as asked: the app closed the DevTools connection'],
     stdoutAbsent: ['::warning'],
+    stderr: ['[cdp] the probe asked the app to quit or restart while 1 command(s) were in flight.'],
+    stderrAbsent: ['the app closed the DevTools connection'],
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
   },
   {
