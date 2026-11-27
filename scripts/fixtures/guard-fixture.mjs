@@ -276,6 +276,20 @@ if (mode === 'cdp-close-expected') {
   process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
 }
 
+if (mode === 'cdp-close-after-report') {
+  // The app goes away after the probe has printed its result: the run is
+  // already decided, so the reason stays in the log and off the run page.
+  const endpoint = await wsEndpoint(() => {})
+  const session = await connect(endpoint.url)
+  reportChecks([{ name: 'guard', ok: true, detail: 'reported' }], { expected: ['guard'], subject: 'guard checks' })
+  const pendingCall = session.call('Runtime.evaluate', { expression: '1' }, 5000).catch((error) => error)
+  await endpoint.close()
+  const thrown = await pendingCall
+  const reason = thrown?.message ?? 'none'
+  console.log(`closed after report: ${reason}`)
+  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+}
+
 /** A loopback port nothing listens on, so discovery's polls all fail. */
 async function closedPort() {
   const server = net.createServer()

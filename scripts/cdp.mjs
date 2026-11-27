@@ -332,6 +332,16 @@ const artifactNote = (artifacts) =>
     : []
 
 /**
+ * Whether the probe has already reported its result.
+ *
+ * reportChecks and reportCrash are the probe's last word on a run: once either
+ * has run, the verdict is decided and the app going away is teardown. Before
+ * that, a connection that drops under a waiting command means the probe lost
+ * the app it was still checking, which is the case worth a run-page notice.
+ */
+let resultReported = false
+
+/**
  * Make a red probe readable from the run page.
  *
  * Annotations put each failed check in the run's annotations view, and the job
@@ -412,6 +422,7 @@ function reportFailure({ subject, total, failed, problems, artifacts, firstFailu
  * so an early crash is triaged like any other red run.
  */
 export function reportCrash({ subject, error, artifacts = [] }) {
+  resultReported = true
   const message = error instanceof Error ? error.message : String(error)
   if (process.env.GITHUB_ACTIONS === 'true') {
     console.log(`::error title=${escapeCommand(`${subject} failed before reporting`, true)}::${escapeCommand(message)}`)
@@ -437,6 +448,7 @@ export function reportCrash({ subject, error, artifacts = [] }) {
  * Returns true only when exactly the declared checks ran and every check passed.
  */
 export function reportChecks(results, { expected, subject, artifacts = [], firstFailure = null }) {
+  resultReported = true
   for (const result of results) {
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name} — ${result.detail}`)
   }
@@ -507,10 +519,11 @@ export async function connect(debuggerUrl) {
     // Name the cause on stderr too: probes that tolerate transient reload errors
     // catch the rejection, and the reason would be lost with it.
     fs.writeSync(2, `\n[cdp] ${closed} while ${inFlight} command(s) were in flight.\n`)
-    // Only an unasked-for close is announced: the app dropping the socket under
-    // a waiting command is the case worth seeing on the run page, while a probe
-    // closing its own session is how every run ends and would warn on each one.
-    if (!closing) announceDiagnostic({
+    // Only an abnormal close is announced: the probe still needs the connection
+    // (it has not reported its result) and did not ask for the close. Every
+    // probe closes its own session as it tears down and some ask the app to quit
+    // mid-run, so those closings belong in the log and never on the run page.
+    if (!closing && !resultReported) announceDiagnostic({
       title: `${probeName()} lost the DevTools connection with ${inFlight} command(s) in flight`,
       heading: `${probeName()} — the DevTools connection closed mid-command`,
       message: `${closed}; ${inFlight} command(s) were in flight and were failed rather than left hanging.`,

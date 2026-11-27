@@ -185,7 +185,7 @@ const CASES = [
   },
   {
     mode: 'cdp-close-inflight',
-    name: 'a DevTools close mid-command is annotated and summarized',
+    name: 'a close mid-command before the result is reported is annotated and summarized',
     exit: 0,
     env: { GITHUB_ACTIONS: 'true' },
     stdout: [
@@ -234,6 +234,20 @@ const CASES = [
     env: { GITHUB_ACTIONS: 'true' },
     stdout: ['app closed as asked: the app closed the DevTools connection'],
     stdoutAbsent: ['::warning'],
+    summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
+  },
+  {
+    // An app that goes away once the result is in is tearing down, not lost:
+    // the probe already reported, so the close is not worth a run-page notice.
+    mode: 'cdp-close-after-report',
+    name: 'a close after the probe reported its result stays off the run page',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: ['1/1 guard checks passed', 'closed after report: the app closed the DevTools connection'],
+    stdoutAbsent: ['::warning'],
+    stderr: [
+      '[cdp] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
+    ],
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
   },
   {
