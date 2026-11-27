@@ -222,10 +222,13 @@ const ROM_DETAIL = `(() => {
   const switchLabel = [...detail.querySelectorAll('label')].find((entry) => entry.textContent.includes('Launch the ROM directly'))
   const toggle = switchLabel?.querySelector('input[type="checkbox"]')
   const play = [...detail.querySelectorAll('button')].find((entry) => ['Play', 'Resume'].includes(entry.textContent.trim()))
+  // The emulator profile loads after the page renders; its args are empty until then.
+  const args = detail.querySelector('input[placeholder="Overrides emulator args"]')
   return {
     open: true,
     switch: Boolean(toggle),
     direct: Boolean(toggle?.checked),
+    profileArgs: args ? args.value : '',
     canPlay: Boolean(play && !play.disabled),
     playLabel: play?.textContent.trim() ?? null
   }
@@ -449,7 +452,10 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
       entry?.click()
       return Boolean(entry)
     })()`)
-    return read(ROM_DETAIL, (state) => Boolean(state?.open))
+    // The detail panel mounts before the game's emulator profile arrives, and the
+    // ROM switch reads off until it does: wait for the profile's args, not just
+    // for the panel, or the switch check races the load (it did once in five).
+    return read(ROM_DETAIL, (state) => Boolean(state?.open) && Boolean(state?.profileArgs))
   }
 
   const clickPlay = clickPlayIn(read)
