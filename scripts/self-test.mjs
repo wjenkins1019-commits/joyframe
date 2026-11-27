@@ -250,6 +250,23 @@ const CASES = [
     summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
   },
   {
+    // verify-pad has its own DevTools client, so the suite only typechecked the
+    // reason it hands a rejected call. Pin both wordings here, or it could
+    // revert to blaming the app for the kill the probe asked for.
+    mode: 'pad-close-requested',
+    name: 'the controller probe rejects with the close it asked for',
+    exit: 0,
+    env: { GITHUB_ACTIONS: '' },
+    stdout: [
+      'pad close asked: the probe killed the app to end the run',
+      'pad close lost: the app closed the DevTools connection'
+    ],
+    stderr: [
+      '[verify:pad] the probe killed the app to end the run while 1 command(s) were in flight.',
+      '[verify:pad] the app closed the DevTools connection (its window closed or the process exited) while 1 command(s) were in flight.'
+    ]
+  },
+  {
     mode: 'cdp-timeout',
     name: 'an unanswered command warns with its method and deadline',
     exit: 0,

@@ -19,6 +19,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { connect, findWindow, preflight, reportChecks, reportCrash, reportUnfinishedRun, waitForValue } from '../cdp.mjs'
+import { connect as connectPad } from '../verify-pad-client.mjs'
 import { assertBuildFresh, writeBuildStamp } from '../build-fresh.mjs'
 import { assertPackagedBuildFresh } from '../packaged-build.mjs'
 
@@ -290,6 +291,34 @@ if (mode === 'cdp-close-after-report') {
   const reason = thrown?.message ?? 'none'
   console.log(`closed after report: ${reason}`)
   process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+}
+
+if (mode === 'pad-close-requested') {
+  // The controller probe drives its own DevTools client, which the self-test
+  // could not reach while it lived inline in verify-pad.mjs: a call left in
+  // flight when the probe kills the app must be rejected with that request,
+  // and the app-closed sentence must stay for closes nobody asked for.
+  const askedEndpoint = await wsEndpoint(() => {})
+  const askedCall = await connectPad(askedEndpoint.url)
+  const askedPending = askedCall('Runtime.evaluate', { expression: '1' }, 5000).catch((error) => error)
+  askedCall.expectClose()
+  await askedEndpoint.close()
+  const askedReason = (await askedPending)?.message ?? 'none'
+
+  const lostEndpoint = await wsEndpoint(() => {})
+  const lostCall = await connectPad(lostEndpoint.url)
+  const lostPending = lostCall('Runtime.evaluate', { expression: '1' }, 5000).catch((error) => error)
+  await lostEndpoint.close()
+  const lostReason = (await lostPending)?.message ?? 'none'
+
+  console.log(`pad close asked: ${askedReason}`)
+  console.log(`pad close lost: ${lostReason}`)
+  process.exit(
+    askedReason === 'the probe killed the app to end the run' &&
+      lostReason.startsWith('the app closed the DevTools connection')
+      ? 0
+      : 1
+  )
 }
 
 /** A loopback port nothing listens on, so discovery's polls all fail. */
