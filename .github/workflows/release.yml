@@ -472,6 +472,27 @@ jobs:
         timeout-minutes: 5
         run: node scripts/verify-installed.mjs
 
+      # Booting is not the first-run flow: this drives the installed copy's
+      # welcome name step with a pad and with real key events, which is what a
+      # new user meets. `JOYFRAME_EXE` is what points the probe at Program Files
+      # instead of release/win-unpacked, and it skips the workspace guards.
+      - name: Installed app — first-run name step
+        id: installed-name-pad
+        timeout-minutes: 3
+        env:
+          JOYFRAME_EXE: C:\Program Files\JOYFRAME\JOYFRAME.exe
+          JF_FAILURE_ARTIFACTS: installed-name-pad-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:intro-name-pad
+
+      - name: Upload installed first-run artifacts
+        if: failure() && steps.installed-name-pad.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-name-pad-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-intro-name-pad.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
       - name: Upload published-copy artifacts
         if: failure() && steps.installed.outcome == 'failure'
         uses: actions/upload-artifact@v4

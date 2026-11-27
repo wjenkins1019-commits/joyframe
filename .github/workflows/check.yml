@@ -340,7 +340,18 @@ jobs:
       - name: Packaged app — welcome name step
         id: intro-name-pad
         timeout-minutes: 3
+        env:
+          JF_FAILURE_ARTIFACTS: intro-name-pad-artifacts-attempt-${{ github.run_attempt }}
         run: npm run verify:intro-name-pad
+
+      - name: Upload intro-name-pad artifacts
+        if: failure() && steps.intro-name-pad.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: intro-name-pad-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-intro-name-pad.log
+          if-no-files-found: warn
+          include-hidden-files: true
 
       # The welcome step above covers the name field only, so the intro dropdown
       # was the one packaged surface no probe drove here: a mode that stopped

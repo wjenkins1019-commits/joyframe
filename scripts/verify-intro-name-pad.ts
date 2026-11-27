@@ -8,9 +8,13 @@
  * this runs against `release/win-unpacked` rather than dev Electron.
  *
  *   npm run verify:intro-name-pad
+ *   JOYFRAME_EXE="C:/Program Files/JOYFRAME/JOYFRAME.exe" npm run verify:intro-name-pad
  *
  * Requires `npm run dist`, and uses `.verify-intro/name-pad-profile`, which is
- * removed on exit.
+ * removed on exit. Point `JOYFRAME_EXE` at an installed copy to run the same
+ * checks against the machine-wide payload; the workspace guards (a current
+ * `out/`, a package matching it) are then skipped, because that copy is
+ * neither.
  */
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -31,7 +35,10 @@ import { updateSettings } from '../src/main/services/settings.ts'
 
 const finishRun = reportUnfinishedRun('verify:intro-name-pad')
 const appLog = createAppLog('verify-intro-name-pad')
-const EXE = path.join('release', 'win-unpacked', 'JOYFRAME.exe')
+// Point JOYFRAME_EXE at an installed copy (e.g. C:\Program Files\JOYFRAME) to
+// run this against it as well.
+const override = process.env.JOYFRAME_EXE
+const EXE = override ?? path.join('release', 'win-unpacked', 'JOYFRAME.exe')
 const PROFILE = path.resolve('.verify-intro/name-pad-profile')
 const PORT = Number(process.env.JF_INTRO_NAME_PORT ?? 9273)
 
@@ -48,10 +55,21 @@ await preflight({
   label: 'verify:intro-name-pad',
   port: PORT,
   portVariable: 'JF_INTRO_NAME_PORT',
-  needs: [{ file: EXE, remedy: MISSING_PACKAGED }]
+  needs: [
+    {
+      file: EXE,
+      remedy: override
+        ? 'Point JOYFRAME_EXE at an existing packaged build, then retry.'
+        : MISSING_PACKAGED
+    }
+  ]
 })
-assertBuildFresh({ label: 'verify:intro-name-pad' })
-assertPackagedBuildFresh()
+// An installed copy is neither `out/` nor the package built from it, so the
+// workspace guards only mean something when the workspace package is the target.
+if (!override) {
+  assertBuildFresh({ label: 'verify:intro-name-pad' })
+  assertPackagedBuildFresh()
+}
 
 const FAKE_PAD = `(() => {
   const pad = {

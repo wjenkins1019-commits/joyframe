@@ -352,7 +352,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run verify:pad` | Drive the controller suite in dev Electron with a virtual pad |
 | `npm run verify:dist` | Boot the packaged build against seeded demo, 1.0.0, ROM-launch, multi-disc and multi-disc recovery profiles; check Home, Console Mode, the upgraded library, the ROM switch, Disc rows and default-disc switching, the fold's `pre-merge` snapshot and the restore path, and every `(default disc missing)` message through a stub emulator |
 | `npm run verify:dist-pad` | Run the controller suite against the packaged build on a seeded demo profile |
-| `npm run verify:packaged` | All four packaged probes in one run, in order: `verify:dist`, `verify:dist-pad`, `verify:first-run`, `verify:intro-ui` (about 105 s) |
+| `npm run verify:packaged` | Every packaged probe in one run, in list order (`verify:dist`, `verify:first-run`, `verify:intro-name-pad`, `verify:intro-ui`, `verify:dist-pad`), stopping at the first failure; the list lives in `scripts/packaged-probes.mjs`, which `certify` and the workflow self-test read too (about 110 s) |
 | `npm run verify:first-run` | Boot the packaged build on a throwaway empty profile; check the welcome screen, empty library and fresh database |
 | `npm run verify:freshness` | Exercise the packaged-build content guard with real fixture archives, without touching `release/` |
 | `npm run verify:intro` | Boot dev Electron on a throwaway profile: auto-advance, key/click/controller skip, `off`, and a seen `first-run`; then the plays-once first-run probe |

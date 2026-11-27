@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { PACKAGED_PROBES } from './packaged-probes.mjs'
 
 const PACKAGED = path.join('release', 'win-unpacked')
 const ASAR = path.join(PACKAGED, 'resources', 'app.asar')
@@ -51,11 +52,9 @@ const STAGES = [
   // the state the release machine depends on.
   { script: 'verify:installer', label: 'installer carries the project icon' },
   { script: 'verify:signing', label: 'signing path ready or cleanly unsigned' },
-  { script: 'verify:dist', label: 'packaged app: demo and 1.0.0 profiles' },
-  { script: 'verify:first-run', label: 'packaged app: first run' },
-  { script: 'verify:intro-name-pad', label: 'packaged app: welcome name step' },
-  { script: 'verify:intro-ui', label: 'packaged app: intro dropdown modes' },
-  { script: 'verify:dist-pad', label: 'packaged app: controller suite' },
+  // The packaged probes come from one list, so a probe cannot be certified only
+  // by being added here and forgotten in the workflow (or the reverse).
+  ...PACKAGED_PROBES.map(({ script, label }) => ({ script, label })),
   { script: 'verify:installed-build', label: 'installed copy matches release/' },
   { script: 'verify:installed', label: 'installed app: intro, skip and cold start' }
 ]

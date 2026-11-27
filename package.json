@@ -29,7 +29,7 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "verify:dist-pad": "node scripts/verify-pad.mjs --dist",
     "verify:first-run": "node scripts/verify-first-run.mjs",
-    "verify:packaged": "npm run verify:dist && npm run verify:dist-pad && npm run verify:first-run && npm run verify:intro-ui",
+    "verify:packaged": "node scripts/run-packaged-probes.mjs",
     "verify:intro": "node scripts/verify-intro.mjs && node scripts/verify-intro-first-run.ts",
     "verify:intro-ui": "node scripts/verify-intro-ui.ts",
     "verify:intro-pad": "node scripts/verify-intro-pad.ts",

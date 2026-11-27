@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import YAML from 'js-yaml'
 import { reportChecks } from './cdp.mjs'
+import { PACKAGED_PROBES, RELEASE_PROBES } from './packaged-probes.mjs'
 
 const WORKFLOW = path.join('.github', 'workflows', 'check.yml')
 const ATTEMPT = '${{ github.run_attempt }}'
@@ -123,6 +124,8 @@ const EXPECTED_CHECKS = [
   'each packaged profile upload follows its probe and only runs on that probe failure',
   'each probe step names the artifacts its summary lists',
   'every installer probe has a timeout that fits inside the job',
+  'every packaged probe runs in the installer job with its pinned timeout, log and upload',
+  'verify:packaged runs the shared list instead of its own chain',
   'the dev controller probe has a timeout that fits inside the job',
   'the intro-pad probe runs in controller-checks and fits inside the job',
   'the intro probe runs in controller-checks and fits inside the job',
@@ -282,6 +285,60 @@ check(
     envSummary('dist', distStep),
     envSummary('first run', firstRunStep)
   ].join(' | ')
+)
+
+// The packaged probe list is the single source `certify` builds its stages
+// from, so check.yml has to run every entry — with the same timeout it pins,
+// a step that exports the artifact its failure summary names, and an upload of
+// the log that artifact carries. A probe added to the list but not to the job
+// (or added to the job and dropped from the list) fails here instead of running
+// in one place and being forgotten in the other.
+const packagedProblems = []
+for (const probe of PACKAGED_PROBES) {
+  const step = installerSteps.find((candidate) => runText(candidate) === `npm run ${probe.script}`)
+  if (!step) {
+    packagedProblems.push(`${probe.script} missing from the installer job`)
+    continue
+  }
+  const timeout = step['timeout-minutes']
+  const exported = String(step?.env?.JF_FAILURE_ARTIFACTS ?? '')
+    .split(',')
+    .map((name) => name.trim())
+  const upload = uploads.find((candidate) => artifactName(candidate.step) === `${probe.artifact}-${ATTEMPT}`)
+  if (timeout !== probe.timeout) packagedProblems.push(`${probe.script} timeout ${timeout ?? '(unset)'} ≠ ${probe.timeout}`)
+  if (!exported.includes(`${probe.artifact}-${ATTEMPT}`)) packagedProblems.push(`${probe.script} summary artifact`)
+  if (!upload || upload.jobId !== 'installer') {
+    packagedProblems.push(`${probe.script} upload`)
+  } else {
+    // The log is required, not exclusive: the controller probe uploads its
+    // screenshots alongside it.
+    if (!stepPaths(upload.step).includes(`.verify-logs/${probe.log}`)) {
+      packagedProblems.push(`${probe.script} log ${stepPaths(upload.step).join(', ') || '(none)'} lacks ${probe.log}`)
+    }
+    if (!condition(upload.step).includes(`steps.${step.id}.outcome == 'failure'`)) {
+      packagedProblems.push(`${probe.script} upload gate`)
+    }
+  }
+  // Without this the probe boots dev Electron and proves nothing about the
+  // package the job built.
+  if (probe.packagedEnv && !String(step?.env?.JOYFRAME_EXE ?? '').includes('win-unpacked')) {
+    packagedProblems.push(`${probe.script} JOYFRAME_EXE ${step?.env?.JOYFRAME_EXE ?? '(unset)'}`)
+  }
+}
+check(
+  'every packaged probe runs in the installer job with its pinned timeout, log and upload',
+  packagedProblems.length === 0,
+  packagedProblems.join('; ') ||
+    `${PACKAGED_PROBES.map((probe) => `${probe.script} ${probe.timeout}m`).join(' | ')}`
+)
+
+// The local command used to be a third hand-written chain. It reads the same
+// list now, so a probe added there runs locally without a second edit.
+const packagedScript = JSON.parse(fs.readFileSync('package.json', 'utf8')).scripts['verify:packaged']
+check(
+  'verify:packaged runs the shared list instead of its own chain',
+  packagedScript === 'node scripts/run-packaged-probes.mjs',
+  packagedScript ?? '(unset)'
 )
 
 // A hung probe must fail on its own timeout while the job still runs, or the
@@ -541,11 +598,10 @@ if (release) {
   // timeout inside the job and a failure log of its own.
   const stageIndex = rWindowsSteps.findIndex((s) => String(s?.uses ?? '').startsWith('softprops/action-gh-release'))
   const releaseProblems = []
-  for (const probe of [
-    { script: 'verify:dist', artifact: 'dist-profiles-artifacts-attempt' },
-    { script: 'verify:first-run', artifact: 'first-run-artifacts-attempt' },
-    { script: 'verify:intro-ui', artifact: 'intro-ui-artifacts-attempt', packaged: true }
-  ]) {
+  // The release subset is declared in packaged-probes.mjs and resolved through
+  // the shared list, so these steps are checked against the same budget, log and
+  // artifact contract the installer job is.
+  for (const probe of RELEASE_PROBES) {
     const step = rWindowsSteps.find((s) => runText(s) === `npm run ${probe.script}`)
     if (!step) {
       releaseProblems.push(`${probe.script} missing`)
@@ -557,15 +613,18 @@ if (release) {
     if (!(index > buildIndex && index < stageIndex)) {
       releaseProblems.push(`${probe.script} at ${index}, outside build ${buildIndex}..stage ${stageIndex}`)
     }
-    if (!Number.isInteger(timeout) || timeout <= 0 || timeout >= rWindows['timeout-minutes']) {
-      releaseProblems.push(`${probe.script} timeout ${timeout ?? '(unset)'} of ${rWindows['timeout-minutes']}m`)
+    if (timeout !== probe.timeout) {
+      releaseProblems.push(`${probe.script} timeout ${timeout ?? '(unset)'} ≠ ${probe.timeout}`)
+    }
+    if (!stepPaths(uploadStep).includes(`.verify-logs/${probe.log}`)) {
+      releaseProblems.push(`${probe.script} log ${stepPaths(uploadStep).join(', ') || '(none)'} lacks ${probe.log}`)
     }
     if (!uploadStep || !condition(uploadStep).includes(`steps.${step.id}.outcome == 'failure'`)) {
       releaseProblems.push(`${probe.script} failure upload`)
     }
     // Without this the probe boots dev Electron and proves nothing about the
     // package being staged.
-    if (probe.packaged && !String(step?.env?.JOYFRAME_EXE ?? '').includes('win-unpacked')) {
+    if (probe.packagedEnv && !String(step?.env?.JOYFRAME_EXE ?? '').includes('win-unpacked')) {
       releaseProblems.push(`${probe.script} JOYFRAME_EXE ${step?.env?.JOYFRAME_EXE ?? '(unset)'}`)
     }
   }
@@ -573,6 +632,29 @@ if (release) {
     'release boots the signed package after dist and before staging the draft',
     releaseProblems.length === 0 && stageIndex > buildIndex,
     releaseProblems.join('; ') || `probes between build ${buildIndex} and stage ${stageIndex}`
+  )
+
+  // Windows-installer may run fewer probes than check.yml, never different ones:
+  // a probe that exists only here would boot a package no other job builds, with
+  // no entry in the shared list to keep its budget and log honest. `verify:installer`
+  // is the one step that inspects the installer file rather than booting the app,
+  // so it has no packaged-probe entry by design.
+  const NOT_A_BOOT_PROBE = new Set(['verify:installer'])
+  const declaredProbes = RELEASE_PROBES.map((probe) => probe.script)
+  const releaseProbeScripts = rWindowsSteps
+    .map((step) => runText(step).match(/^npm run (verify:[a-z0-9-]+)/)?.[1])
+    .filter((script) => script && !NOT_A_BOOT_PROBE.has(script))
+  const inventedProbes = releaseProbeScripts.filter((script) => !declaredProbes.includes(script))
+  const droppedProbes = declaredProbes.filter((script) => !releaseProbeScripts.includes(script))
+  check(
+    'release runs exactly the declared packaged-probe subset',
+    inventedProbes.length === 0 && droppedProbes.length === 0,
+    [
+      inventedProbes.length ? `not declared in packaged-probes.mjs: ${inventedProbes.join(', ')}` : '',
+      droppedProbes.length ? `declared but not run: ${droppedProbes.join(', ')}` : ''
+    ]
+      .filter(Boolean)
+      .join('; ') || releaseProbeScripts.join(', ')
   )
 
   const azureStep = rWindowsSteps.find((s) => runText(s).includes('enable-azure-signing.mjs'))
@@ -680,6 +762,22 @@ if (release) {
     'verify-published boots the published copy',
     runText(bootStep).includes('verify-installed.mjs'),
     bootStep ? runText(bootStep).slice(0, 80) : 'installed boot step missing'
+  )
+
+  // A boot proves the installed exe starts; it says nothing about the first-run
+  // flow a new user meets. The name-step probe has to run here too, aimed at
+  // Program Files, with its own timeout inside the job.
+  const namePadStep = rVerifySteps.find((s) => runText(s) === 'npm run verify:intro-name-pad')
+  check(
+    'verify-published proves the installed first-run name step',
+    Boolean(namePadStep) &&
+      Number.isInteger(namePadStep['timeout-minutes']) &&
+      namePadStep['timeout-minutes'] > 0 &&
+      namePadStep['timeout-minutes'] < rVerify['timeout-minutes'] &&
+      String(namePadStep?.env?.JOYFRAME_EXE ?? '').includes('Program Files'),
+    namePadStep
+      ? `timeout ${namePadStep['timeout-minutes']}m of ${rVerify['timeout-minutes']}m, exe ${namePadStep?.env?.JOYFRAME_EXE ?? '(unset)'}`
+      : 'name-pad step missing'
   )
 
   const promoteText = rPromoteSteps.map(runText).join('\n')
@@ -801,6 +899,7 @@ const RELEASE_CHECKS = [
   'release tag guard runs before the build and refuses mismatched versions',
   'release requires a green check run for the commit before building',
   'release boots the signed package after dist and before staging the draft',
+  'release runs exactly the declared packaged-probe subset',
   'release azure step is ungated and carries all 7 secrets',
   'release version/channel derivation matches the updater rule',
   'release beta manifest copy is prerelease-gated',
@@ -811,6 +910,7 @@ const RELEASE_CHECKS = [
   'verify-published requires a Valid signature only when signing was on',
   'verify-published installs silently and waits for the exe',
   'verify-published boots the published copy',
+  'verify-published proves the installed first-run name step',
   'promote-release publishes via gh release edit without touching prerelease',
   'release probes carry timeouts inside their job budgets',
   'signing enabler emits timestamped azureSignOptions'
