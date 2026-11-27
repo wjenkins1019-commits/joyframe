@@ -100,6 +100,8 @@ const PROFILE_CHECKS = {
     'a missing default disc falls back to the disc on disk',
     'the fallback launch says the default disc is missing',
     'the disc coming back restores the default launch',
+    'an emulator default falls back to the disc on disk',
+    'that fallback names the emulator default as missing',
     'restore restarts the app on the restored library',
     'the restored snapshot brings back one entry per disc',
     'restore keeps a copy of the replaced library'
@@ -769,6 +771,51 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
         backArgs.length === 1 &&
         path.resolve(backArgs[0]) === path.resolve(disc(0)),
       `button=${backPlay ?? 'missing'} stub=${JSON.stringify(backArgs)}`
+    )
+
+    // The second fallback branch in launcher.ts: the default is an emulator
+    // choice rather than a disc row, so the dead path is the game's own ROM and
+    // a disc still on disk is handed to the emulator in its place.
+    const emulatorDefault = await evaluate(`(async () => {
+      const [game] = await window.joyframe.library.list({ search: ${JSON.stringify(RECOVERY_TITLE)} })
+      if (!game) return null
+      const updated = await window.joyframe.library.addMethod(game.id, {
+        label: 'Preferred emulator',
+        kind: 'emulator',
+        emulatorId: game.emulatorId
+      })
+      const method = (updated?.launchMethods ?? []).find((entry) => entry.label === 'Preferred emulator')
+      if (!method) return null
+      await window.joyframe.library.setDefaultMethod(method.id)
+      return { romPath: game.romPath }
+    })()`)
+    if (!emulatorDefault?.romPath) {
+      check(`${label}: an emulator default falls back to the disc on disk`, false, 'default emulator method was not added')
+      check(`${label}: that fallback names the emulator default as missing`, false, 'default emulator method was not added')
+      return
+    }
+    fs.rmSync(emulatorDefault.romPath, { force: true })
+    fs.rmSync(record, { force: true })
+    const emulatorPlay = await clickPlay()
+    const emulatorToasts = await read(
+      TOASTS,
+      (lines) => Array.isArray(lines) && lines.some((line) => line.includes('Emulator (default disc missing)')),
+      8000
+    )
+    const emulatorArgs = await waitForArgs(record)
+    const emulatorToast = (emulatorToasts ?? []).find((line) => line.includes('Emulator (default disc missing)'))
+    check(
+      `${label}: an emulator default falls back to the disc on disk`,
+      Boolean(emulatorPlay) &&
+        Array.isArray(emulatorArgs) &&
+        emulatorArgs.length === 1 &&
+        path.resolve(emulatorArgs[0]) === path.resolve(disc(1)),
+      `button=${emulatorPlay ?? 'missing'} stub=${JSON.stringify(emulatorArgs)}`
+    )
+    check(
+      `${label}: that fallback names the emulator default as missing`,
+      Boolean(emulatorToast),
+      emulatorToast ?? `no such toast: ${JSON.stringify(emulatorToasts ?? [])}`
     )
 
     if (premerge.length !== 1) return
