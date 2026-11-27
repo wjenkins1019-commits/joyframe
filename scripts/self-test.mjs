@@ -121,19 +121,35 @@ const CASES = [
     mode: 'late-bridge',
     name: 'a bridge that appears ten seconds late is still awaited',
     exit: 0,
-    stdout: ['late bridge: value=bridge waited=10000ms']
+    stdout: ['late bridge: value=bridge waited=10000ms'],
+    stderrAbsent: ['[cdp] warning']
   },
   {
     mode: 'never-bridge',
     name: 'a bridge that never appears ends at the deadline instead of hanging',
     exit: 0,
-    stdout: ['missing bridge: value=null waited=30000ms']
+    stdout: ['missing bridge: value=null waited=30000ms'],
+    stderrAbsent: ['[cdp] warning']
+  },
+  {
+    // A read that returns stale state at its deadline used to look identical to
+    // one that matched, which is how the ROM-switch stalls stayed invisible.
+    mode: 'stalled-read',
+    name: 'a read that only settles at its deadline warns with the probe and predicate',
+    exit: 0,
+    stdout: ['stalled read: value={"open":true,"profileCard":false} waited=5000ms'],
+    stderr: [
+      '[cdp] warning: guard-fixture settled a read at its 5000ms deadline',
+      'expression: detailState()',
+      'predicate: (state) => Boolean(state?.open && state?.profileCard)'
+    ]
   },
   {
     mode: 'read-gives-up',
     name: 'a read that only ever throws surfaces the error at the deadline',
     exit: 0,
-    stdout: ['read failed: no renderer yet waited=20000ms']
+    stdout: ['read failed: no renderer yet waited=20000ms'],
+    stderrAbsent: ['[cdp] warning']
   },
   {
     // Window discovery is the first gate of a cold boot, so its budget must end

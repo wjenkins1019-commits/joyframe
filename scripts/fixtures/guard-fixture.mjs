@@ -169,6 +169,19 @@ if (mode === 'read-gives-up') {
   process.exit(thrown?.message === 'no renderer yet' ? 0 : 1)
 }
 
+if (mode === 'stalled-read') {
+  // A value arrives but the predicate never accepts it: the read settles at its
+  // deadline on that partly hydrated value, which must be announced on stderr.
+  const { clock, elapsed } = virtualClock()
+  const value = await waitForValue(
+    async () => ({ open: true, profileCard: false }),
+    'detailState()',
+    { timeout: 5000, clock, ready: (state) => Boolean(state?.open && state?.profileCard) }
+  )
+  console.log(`stalled read: value=${JSON.stringify(value)} waited=${elapsed()}ms`)
+  process.exit(value?.open === true && value?.profileCard === false ? 0 : 1)
+}
+
 /** A loopback port nothing listens on, so discovery's polls all fail. */
 async function closedPort() {
   const server = net.createServer()

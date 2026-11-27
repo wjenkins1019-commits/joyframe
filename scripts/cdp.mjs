@@ -14,6 +14,38 @@ export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 /** The wall clock waitForValue uses; a test substitutes its own to skip real time. */
 export const REAL_CLOCK = { now: () => Date.now(), sleep: (ms) => delay(ms) }
 
+/** The probe's own file name, used when a caller does not name its read. */
+function probeName() {
+  const script = process.argv[1]
+  if (!script) return 'probe'
+  return path.basename(script, path.extname(script))
+}
+
+/** One line of a predicate or expression, short enough to read in a log. */
+const brief = (text, limit) => {
+  const flat = String(text).replace(/\s+/g, ' ').trim()
+  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat
+}
+
+/**
+ * Say so when a wait ends at its deadline with a value its predicate rejected.
+ *
+ * Returning the last value keeps a caller able to name what never appeared, but
+ * it also makes a partly-hydrated page look like a settled one: the read spends
+ * its whole budget and the probe goes on to check stale state, with nothing in
+ * the log to show it. Name the probe, the read and the predicate on stderr so a
+ * stall is visible in a passing run too.
+ */
+function warnStalledRead({ label, expression, timeout, ready }) {
+  fs.writeSync(
+    2,
+    `\n[cdp] warning: ${label} settled a read at its ${timeout}ms deadline without its predicate matching — ` +
+      'the value may only have partly hydrated.\n' +
+      `  expression: ${brief(expression, 120)}\n` +
+      `  predicate: ${brief(ready, 160)}\n`
+  )
+}
+
 /**
  * Poll `evaluate(expression)` until `ready` accepts the value.
  *
@@ -27,13 +59,17 @@ export const REAL_CLOCK = { now: () => Date.now(), sleep: (ms) => delay(ms) }
  * ten-second wait without spending ten seconds.
  *
  * The last value read is returned at the deadline, so the caller can name what
- * never appeared instead of hanging. Probes that must not mistake silence for
+ * never appeared instead of hanging. A value that arrives but never satisfies
+ * `ready` is the case worth hearing about: it is returned like any other, so a
+ * caller that checks its fields would act on a page still being hydrated. That
+ * expiry prints a warning naming `label` (the probe, by default its file name),
+ * the expression and the predicate. Probes that must not mistake silence for
  * an empty page pass `throwOnExpire`, which rethrows the read error instead.
  */
 export async function waitForValue(
   evaluate,
   expression,
-  { timeout, interval = 100, clock = REAL_CLOCK, ready = Boolean, throwOnExpire = false }
+  { timeout, interval = 100, clock = REAL_CLOCK, ready = Boolean, throwOnExpire = false, label = probeName() }
 ) {
   const deadline = clock.now() + timeout
   let value = null
@@ -49,6 +85,8 @@ export async function waitForValue(
     await clock.sleep(interval)
   }
   if (!value && error && throwOnExpire) throw error
+  // Every match returned above, so a value here never met its predicate.
+  if (value) warnStalledRead({ label, expression, timeout, ready })
   return value
 }
 
@@ -505,7 +543,9 @@ export async function createSession(target, { reload = true } = {}) {
   /**
    * Poll `expression` until `ready` accepts its value. Reloads make the probe
    * throw briefly; the error is kept and rethrown when nothing ever renders, so
-   * a broken probe fails instead of timing out silently.
+   * a broken probe fails instead of timing out silently. A value that arrives
+   * but never satisfies `ready` is returned at the deadline with a warning, so
+   * a partially hydrated read is visible even when the checks pass.
    */
   const read = (expression, ready, timeout = 20000) =>
     waitForValue(evaluate, expression, { timeout, interval: 150, ready, throwOnExpire: true })

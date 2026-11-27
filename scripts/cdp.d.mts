@@ -11,6 +11,8 @@ export declare const REAL_CLOCK: Clock
 /**
  * Polls `evaluate(expression)` until `ready` accepts the value. Returns the last
  * value read at the deadline, or rethrows the read error with `throwOnExpire`.
+ * A value that never satisfies `ready` is returned with a stderr warning naming
+ * `label` (the probe's file name by default), the expression and the predicate.
  */
 export declare function waitForValue(
   evaluate: (expression: string) => Promise<any>,
@@ -21,6 +23,7 @@ export declare function waitForValue(
     clock?: Clock
     ready?: (value: any) => boolean
     throwOnExpire?: boolean
+    label?: string
   }
 ): Promise<any>
 
