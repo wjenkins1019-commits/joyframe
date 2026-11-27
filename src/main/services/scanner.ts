@@ -4,7 +4,7 @@ import type { Emulator, Game, ScanProgress, ScanResult } from '../../shared/type
 import type { Db } from './db.ts'
 import { defaultRomOrder } from '../../shared/rom-formats.ts'
 import { detectPlatform, platformById } from './platforms.ts'
-import { findBySource, findDuplicate, insertGame, nowIso, rowToEmulator, uid } from './repo.ts'
+import { findBySource, findDuplicate, insertGame, mergeGames, nowIso, rowToEmulator, rowToGame, uid } from './repo.ts'
 
 export type ProgressEmitter = (progress: ScanProgress) => void
 
@@ -231,7 +231,7 @@ export async function scanPcFolders(
     message: `PC scan complete — ${added} added, ${updated} updated, ${skipped} already in library`,
     errors
   })
-  return { kind: 'pc', added, updated, skipped, errors, elapsedMs: Date.now() - started }
+  return { kind: 'pc', added, updated, skipped, removed: 0, errors, elapsedMs: Date.now() - started }
 }
 
 const ARCHIVE_EXTENSIONS = new Set(['zip', '7z'])
@@ -295,6 +295,7 @@ export async function scanRomFolders(
   let added = 0
   let updated = 0
   let skipped = 0
+  let removed = 0
 
   emit({ phase: 'start', kind: 'rom', scanned: 0, found: 0, message: 'Scanning ROM folders…' })
 
@@ -365,13 +366,68 @@ export async function scanRomFolders(
     }
     pending = [...bestVariants.values()]
     skipped += variantsSkipped
-    if (variantsSkipped > 0) {
+
+    // Single-game folders: a directory named after its game (e.g. `Hades/`
+    // holding the ROM plus update/DLC/track sidecars) imports one ROM — the
+    // disc sheet (.cue/.m3u) when the folder has one, otherwise the largest
+    // file, which is usually the game itself. Each disc of a multi-disc set
+    // still imports. Collection folders whose name matches no title keep
+    // every game.
+    const SHEET_EXTENSIONS = new Set(['cue', 'm3u'])
+    const discGroup = (title: string): string => {
+      const match = variantKey(title).match(/(disc|disk|cd|part)\d+/)
+      return match ? match[0] : 'single'
+    }
+    // A sidecar file keeps the folder's name up front and adds a marker
+    // (update, DLC, track/disc number …); anything else is another game.
+    const SIDECAR_RE = /^(update|dlc|patch|track|disc|disk|cd|part|demo|beta|proto|v\d|\d)/
+    const relatesToFolder = (title: string, folderKey: string): boolean => {
+      const key = variantKey(title)
+      if (key === folderKey) return true
+      return key.startsWith(folderKey) && SIDECAR_RE.test(key.slice(folderKey.length))
+    }
+    const byFolder = new Map<string, typeof pending>()
+    for (const item of pending) {
+      const key = `${item.platformId}|${path.dirname(item.file).toLowerCase()}`
+      const list = byFolder.get(key) ?? []
+      list.push(item)
+      byFolder.set(key, list)
+    }
+    let folderSkipped = 0
+    pending = [...byFolder.values()].flatMap((items) => {
+      if (items.length < 2) return items
+      const folderKey = variantKey(path.basename(path.dirname(items[0].file)))
+      if (!items.some((item) => variantKey(item.title) === folderKey)) return items
+      // Collapse only the files that belong to the folder's game; an
+      // unrelated game sharing the folder still imports on its own.
+      const related = items.filter((item) => relatesToFolder(item.title, folderKey))
+      const unrelated = items.filter((item) => !relatesToFolder(item.title, folderKey))
+      const winners = new Map<string, (typeof items)[number]>()
+      for (const item of related) {
+        const group = discGroup(item.title)
+        const current = winners.get(group)
+        if (!current) {
+          winners.set(group, item)
+          continue
+        }
+        const itemIsSheet = SHEET_EXTENSIONS.has(path.extname(item.file).slice(1).toLowerCase())
+        const currentIsSheet = SHEET_EXTENSIONS.has(path.extname(current.file).slice(1).toLowerCase())
+        if (itemIsSheet !== currentIsSheet ? itemIsSheet : item.size > current.size) {
+          winners.set(group, item)
+        }
+        folderSkipped += 1
+      }
+      return [...winners.values(), ...unrelated]
+    })
+    skipped += folderSkipped
+    const extrasSkipped = variantsSkipped + folderSkipped
+    if (extrasSkipped > 0) {
       emit({
         phase: 'matching',
         kind: 'rom',
         scanned,
         found: pending.length,
-        message: `Skipped ${variantsSkipped} duplicate format${variantsSkipped === 1 ? '' : 's'} — keeping one file per game`
+        message: `Skipped ${extrasSkipped} extra file${extrasSkipped === 1 ? '' : 's'} — keeping one ROM per game`
       })
     }
 
@@ -407,6 +463,33 @@ export async function scanRomFolders(
         await yieldToLoop()
       }
     }
+    // Fold stale sidecar entries left by older scans into the surviving game,
+    // so rescanning cleans the library without losing playtime or metadata.
+    // Only entries that relate to a single-game folder's kept ROM qualify —
+    // anything else in the library is left alone.
+    const winnerFiles = new Set(pending.map((item) => item.file.toLowerCase()))
+    const rootPrefix = root.toLowerCase()
+    const library = db.prepare(`SELECT * FROM games WHERE source = 'rom-scan'`).all() as Record<string, unknown>[]
+    for (const row of library) {
+      const stale = rowToGame(row)
+      const staleFile = (stale.sourceId || stale.romPath).toLowerCase()
+      if (!staleFile || winnerFiles.has(staleFile)) continue
+      const staleDir = path.dirname(staleFile)
+      if (!staleFile.startsWith(rootPrefix) && !stale.installDir.toLowerCase().startsWith(rootPrefix)) continue
+      const folderKey = variantKey(path.basename(staleDir))
+      if (!relatesToFolder(stale.title, folderKey)) continue
+      const survivor = pending.find(
+        (item) =>
+          path.dirname(item.file).toLowerCase() === staleDir.toLowerCase() &&
+          item.platformId === stale.platformId &&
+          variantKey(item.title) === folderKey &&
+          discGroup(item.title) === discGroup(stale.title)
+      )
+      const survivorGame = survivor ? findBySource(db, 'rom-scan', survivor.file) : null
+      if (!survivor || !survivorGame || survivorGame.id === stale.id) continue
+      mergeGames(db, survivorGame.id, stale.id)
+      removed += 1
+    }
     // Release memory between roots.
     pending = []
   }
@@ -416,10 +499,10 @@ export async function scanRomFolders(
     kind: 'rom',
     scanned,
     found: added,
-    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats kept out)`,
+    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats and sidecar files kept out)${removed > 0 ? `, ${removed} stale sidecar${removed === 1 ? '' : 's'} folded into surviving games` : ''}`,
     errors
   })
-  return { kind: 'rom', added, updated, skipped, errors, elapsedMs: Date.now() - started }
+  return { kind: 'rom', added, updated, skipped, removed, errors, elapsedMs: Date.now() - started }
 }
 
 /** Best-effort enrichment of ROM metadata from the filename. */

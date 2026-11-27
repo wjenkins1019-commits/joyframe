@@ -123,6 +123,9 @@ npm run smoke
 - ROM scanning with extension mapping, folder-name hints for ambiguous `.iso`/`.chd`/`.cue`, CUE/BIN grouping,
   BIOS/firmware exclusion, duplicate protection and automatic emulator assignment.
 - One file per game: when a title exists in several formats in the same folder only the preferred one imports.
+  A folder named after its game (ROM plus update/DLC/track sidecars) imports once — the disc sheet when there is
+  one, otherwise the largest file — with one entry per disc for multi-disc sets.
+  Rescanning folds stale sidecar entries from older scans into the surviving game, keeping playtime and metadata.
   Each platform's order is editable in Settings → Library & scanning → ROM format preference (defaults: Switch
   `.xci` → `.nsp` → `.nsz`, PS2 `.chd` → `.iso`, disc sets keep `.m3u`/`.cue` over `.bin`, archives sort last).
   The scan reports how many duplicate formats it skipped.

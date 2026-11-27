@@ -288,6 +288,7 @@ export async function importSteamGames(
       added: 0,
       updated: 0,
       skipped: 0,
+      removed: 0,
       errors: ['Steam installation not found. Set the Steam folder in Settings.'],
       elapsedMs: Date.now() - started,
       steamPath: ''
@@ -374,6 +375,7 @@ export async function importSteamGames(
     added,
     updated,
     skipped,
+    removed: 0,
     errors,
     elapsedMs: Date.now() - started,
     steamPath

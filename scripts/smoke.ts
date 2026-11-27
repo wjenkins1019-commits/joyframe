@@ -89,6 +89,17 @@ write(path.join(romRoot, 'ps1', 'Final Fantasy VII (Disc 1).bin'), 'bin', 4096)
 write(path.join(romRoot, 'switch', 'Metroid Dread.nsp'), 'nsp', 2048)
 write(path.join(romRoot, 'switch', 'Metroid Dread.nsz'), 'nsz', 3072)
 write(path.join(romRoot, 'switch', 'Metroid Dread.xci'), 'xci', 4096)
+// A single-game folder: the ROM plus smaller sidecars imports once (largest wins).
+write(path.join(romRoot, 'switch', 'Hades', 'Hades.nsp'), 'nsp', 4096)
+write(path.join(romRoot, 'switch', 'Hades', 'Hades Update.nsp'), 'nsp', 512)
+write(path.join(romRoot, 'switch', 'Hades', 'Hollow Knight.nsp'), 'nsp', 1024)
+// A single-game folder with a cue sheet and track bins: the sheet imports.
+write(path.join(romRoot, 'ps1', 'Chrono Cross', 'Chrono Cross.cue'), 'FILE "x.bin" BINARY', 256)
+write(path.join(romRoot, 'ps1', 'Chrono Cross', 'Chrono Cross (Track 1).bin'), 'bin', 4096)
+write(path.join(romRoot, 'ps1', 'Chrono Cross', 'Chrono Cross (Track 2).bin'), 'bin', 1024)
+// A single-game folder with two discs: one entry per disc.
+write(path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 1).cue'), 'cue', 256)
+write(path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 2).cue'), 'cue', 256)
 write(path.join(romRoot, 'bios', 'scph1001.bin'), 'bios', 512)
 write(path.join(romRoot, 'snes', 'notes.txt'), 'not a rom')
 
@@ -134,7 +145,7 @@ await check('PC scan picks the executable matching the folder name', () => {
 await check('ROM scan detects platforms from extensions and folder hints', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const byPlatform = new Map(romGames.map((game) => [game.title, game.platformId]))
-  assert.equal(romGames.length, 6)
+  assert.equal(romGames.length, 11)
   assert.equal(byPlatform.get('Chrono Trigger'), 'snes')
   assert.equal(byPlatform.get('Super Mario Bros'), 'nes')
   assert.equal(byPlatform.get('Pokemon Emerald'), 'gba')
@@ -161,13 +172,35 @@ await check('multi-format games import once, in the preferred format', () => {
   const metroid = romGames.filter((game) => game.title === 'Metroid Dread')
   assert.equal(metroid.length, 1)
   assert.ok(metroid[0].romPath.toLowerCase().endsWith('.xci'))
-  assert.equal(romGames.filter((game) => /\.(nsp|nsz)$/i.test(game.romPath)).length, 0)
+  assert.equal(metroid.filter((game) => /\.(nsp|nsz)$/i.test(game.romPath)).length, 0)
 })
 
 await check('CUE/BIN pairs are not imported twice and BIOS files are ignored', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   assert.equal(romGames.filter((game) => game.romPath.toLowerCase().endsWith('.bin')).length, 0)
   assert.equal(romGames.filter((game) => /bios/i.test(game.romPath)).length, 0)
+})
+
+await check('single-game folders import one ROM (largest wins, sheet over track bins)', () => {
+  const romGames = queryGames(db, { source: 'rom-scan' }, true)
+  const hades = romGames.filter((game) => game.title === 'Hades')
+  assert.equal(hades.length, 1)
+  assert.ok(hades[0].romPath.toLowerCase().endsWith(`${path.sep}hades.nsp`))
+  assert.equal(romGames.filter((game) => /update/i.test(game.title)).length, 0)
+  const stowaway = romGames.filter((game) => game.title === 'Hollow Knight')
+  assert.equal(stowaway.length, 1)
+  assert.ok(stowaway[0].romPath.toLowerCase().includes(`${path.sep}hades${path.sep}`))
+  const chrono = romGames.filter((game) => game.title === 'Chrono Cross')
+  assert.equal(chrono.length, 1)
+  assert.ok(chrono[0].romPath.toLowerCase().endsWith('.cue'))
+})
+
+await check('multi-disc folders keep one entry per disc', () => {
+  const romGames = queryGames(db, { source: 'rom-scan' }, true)
+  const ff9 = romGames.filter((game) => game.title.startsWith('Final Fantasy IX'))
+  assert.equal(ff9.length, 2)
+  assert.ok(ff9.some((game) => game.title.includes('Disc 1')))
+  assert.ok(ff9.some((game) => game.title.includes('Disc 2')))
 })
 
 await check('ROMs are auto-mapped to a compatible emulator and core', () => {
@@ -182,6 +215,37 @@ await check('Rescanning is idempotent (no duplicates)', async () => {
   assert.equal(again.added, 0)
   assert.ok(again.skipped >= 5)
   assert.equal(queryGames(db, {}, true).length, before)
+})
+
+await check('rescan folds stale sidecar entries into the surviving game', async () => {
+  const hadesDir = path.join(romRoot, 'switch', 'Hades')
+  const staleFile = path.join(hadesDir, 'Hades Update.nsp')
+  const stale = insertGame(db, {
+    title: 'Hades Update',
+    platformId: 'switch',
+    source: 'rom-scan',
+    sourceId: staleFile,
+    romPath: staleFile,
+    installDir: hadesDir,
+    playtimeSeconds: 3600,
+    playCount: 2,
+    lastPlayed: '2026-01-02T00:00:00.000Z',
+    notes: 'stale sidecar note'
+  })
+  const before = queryGames(db, { source: 'rom-scan' }, true).length
+  const result = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(result.removed, 1)
+  const romGames = queryGames(db, { source: 'rom-scan' }, true)
+  assert.equal(romGames.length, before - 1)
+  assert.equal(romGames.filter((game) => game.id === stale.id).length, 0)
+  const hades = romGames.filter((game) => game.title === 'Hades')
+  assert.equal(hades.length, 1)
+  assert.equal(hades[0].playtimeSeconds, 3600)
+  assert.equal(hades[0].playCount, 2)
+  assert.equal(hades[0].lastPlayed, '2026-01-02T00:00:00.000Z')
+  assert.equal(hades[0].notes, 'stale sidecar note')
+  // The unrelated game sharing the folder is left alone.
+  assert.equal(romGames.filter((game) => game.title === 'Hollow Knight').length, 1)
 })
 
 await check('Scan progress is reported', () => {
@@ -323,7 +387,8 @@ await check('Favorites and completion drive built-in home rows', () => {
 })
 
 await check('Search and filters work across the unified library', () => {
-  assert.equal(queryGames(db, { search: 'chrono' }).length, 1)
+  assert.equal(queryGames(db, { search: 'chrono trigger' }).length, 1)
+  assert.equal(queryGames(db, { search: 'chrono' }).length, 2)
   assert.ok(queryGames(db, { platformId: 'snes' }).length >= 1)
   assert.ok(queryGames(db, { favorite: true }).length >= 1)
   assert.equal(queryGames(db, { played: 'never' }).some((game) => game.title === 'Chrono Trigger'), true)

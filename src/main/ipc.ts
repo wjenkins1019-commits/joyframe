@@ -48,7 +48,7 @@ import {
   setArtwork,
   setLocalArtwork
 } from './services/metadata.ts'
-import { getPlatforms, getGame, insertGame, nowIso, queryGames, uid, updateGameRecord, deleteGame } from './services/repo.ts'
+import { getPlatforms, getGame, insertGame, mergeGames, nowIso, queryGames, uid, updateGameRecord, deleteGame } from './services/repo.ts'
 import { markSavesScanned, listSaves, removeSaveRecord, scanSaves, saveSummary } from './services/saves.ts'
 import { scanPcFolders, scanRomFolders } from './services/scanner.ts'
 import { getMeta, getSettings, publicSettings, setMeta, updateSettings } from './services/settings.ts'
@@ -176,37 +176,7 @@ export function createHandlers(ctx: AppContext) {
     'library:favorite': (id: string, favorite: boolean) => updateGameRecord(ctx.db, id, { favorite }),
     'library:hidden': (id: string, hidden: boolean) => updateGameRecord(ctx.db, id, { hidden }),
     'library:completion': (id: string, status: Game['completion']) => updateGameRecord(ctx.db, id, { completion: status }),
-    'library:merge': (primaryId: string, duplicateId: string): Game => {
-      const primary = getGame(ctx.db, primaryId)
-      const duplicate = getGame(ctx.db, duplicateId)
-      if (!primary || !duplicate) throw new Error('Both games must exist to merge')
-      const methods = ctx.db.prepare('SELECT * FROM launch_methods WHERE game_id = ?').all(duplicateId) as Record<
-        string,
-        unknown
-      >[]
-      for (const method of methods) {
-        ctx.db.prepare('UPDATE launch_methods SET game_id = ? WHERE id = ?').run(primaryId, String(method.id))
-      }
-      ctx.db.prepare('UPDATE OR IGNORE collection_games SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
-      ctx.db.prepare('UPDATE play_sessions SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
-      const merged: Partial<Game> = {
-        description: primary.description || duplicate.description,
-        developer: primary.developer || duplicate.developer,
-        publisher: primary.publisher || duplicate.publisher,
-        genres: [...new Set([...primary.genres, ...duplicate.genres])],
-        coverPath: primary.coverPath || duplicate.coverPath,
-        backgroundPath: primary.backgroundPath || duplicate.backgroundPath,
-        logoPath: primary.logoPath || duplicate.logoPath,
-        screenshots: primary.screenshots.length ? primary.screenshots : duplicate.screenshots,
-        videoUrl: primary.videoUrl || duplicate.videoUrl,
-        playtimeSeconds: primary.playtimeSeconds + duplicate.playtimeSeconds,
-        favorite: primary.favorite || duplicate.favorite,
-        rating: primary.rating ?? duplicate.rating,
-        platformId: primary.platformId || duplicate.platformId
-      }
-      deleteGame(ctx.db, duplicateId)
-      return updateGameRecord(ctx.db, primaryId, merged)
-    },
+    'library:merge': (primaryId: string, duplicateId: string): Game => mergeGames(ctx.db, primaryId, duplicateId),
     'library:addMethod': (gameId: string, method: Partial<LaunchMethod>) => {
       const isFirst =
         (ctx.db.prepare('SELECT COUNT(*) AS c FROM launch_methods WHERE game_id = ?').get(gameId) as { c: number }).c ===

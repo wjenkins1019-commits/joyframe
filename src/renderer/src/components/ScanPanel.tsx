@@ -76,7 +76,7 @@ export function ScanPanel({ open, onClose }: { open: boolean; onClose: () => voi
       const result = await api.scans.romFolders(folders)
       await refresh()
       await loadPaths()
-      setLastResult(`ROM scan: ${result.added} added, ${result.skipped} skipped in ${Math.round(result.elapsedMs / 1000)}s.`)
+      setLastResult(`ROM scan: ${result.added} added, ${result.skipped} skipped${result.removed > 0 ? `, ${result.removed} stale cleaned up` : ''} in ${Math.round(result.elapsedMs / 1000)}s.`)
       notify(result.errors.length ? result.errors[0] : `ROM scan complete — ${result.added} ROMs added.`, result.errors.length ? 'error' : 'success')
     } catch (error) {
       notify(errorMessage(error), 'error')

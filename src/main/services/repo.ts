@@ -416,6 +416,54 @@ export function deleteGame(db: Db, id: string): boolean {
   return Number(result.changes) > 0
 }
 
+/**
+ * Fold `duplicateId` into `primaryId` without losing history: playtime and
+ * play counts are summed, the latest play date wins, launch methods,
+ * collections, sessions and saves move over, and blank metadata fields are
+ * filled from the duplicate. Returns the surviving game.
+ */
+export function mergeGames(db: Db, primaryId: string, duplicateId: string): Game {
+  const primary = getGame(db, primaryId)
+  const duplicate = getGame(db, duplicateId)
+  if (!primary || !duplicate) throw new Error('Both games must exist to merge')
+  db.prepare('UPDATE launch_methods SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
+  db.prepare('UPDATE play_sessions SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
+  // Rows that would collide (same save path or collection) stay behind and
+  // vanish with the duplicate instead of breaking unique constraints.
+  db.prepare('UPDATE OR IGNORE game_saves SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
+  db.prepare('UPDATE OR IGNORE collection_games SET game_id = ? WHERE game_id = ?').run(primaryId, duplicateId)
+  const merged: GameUpdate = {
+    description: primary.description || duplicate.description,
+    developer: primary.developer || duplicate.developer,
+    publisher: primary.publisher || duplicate.publisher,
+    genres: [...new Set([...primary.genres, ...duplicate.genres])],
+    coverPath: primary.coverPath || duplicate.coverPath,
+    backgroundPath: primary.backgroundPath || duplicate.backgroundPath,
+    logoPath: primary.logoPath || duplicate.logoPath,
+    screenshots: primary.screenshots.length ? primary.screenshots : duplicate.screenshots,
+    videoUrl: primary.videoUrl || duplicate.videoUrl,
+    playtimeSeconds: primary.playtimeSeconds + duplicate.playtimeSeconds,
+    playCount: primary.playCount + duplicate.playCount,
+    lastPlayed: primary.lastPlayed > duplicate.lastPlayed ? primary.lastPlayed : duplicate.lastPlayed,
+    favorite: primary.favorite || duplicate.favorite,
+    rating: primary.rating ?? duplicate.rating,
+    platformId: primary.platformId || duplicate.platformId,
+    completion: primary.completion === 'unplayed' ? duplicate.completion : primary.completion,
+    notes: primary.notes || duplicate.notes,
+    metadataProvider: primary.metadataProvider || duplicate.metadataProvider,
+    metadataConfidence: primary.metadataConfidence || duplicate.metadataConfidence
+  }
+  deleteGame(db, duplicateId)
+  const survivor = updateGameRecord(db, primaryId, merged)
+  // The duplicate may be the older entry: the survivor keeps the earliest date.
+  if (duplicate.addedAt && (!survivor.addedAt || duplicate.addedAt < survivor.addedAt)) {
+    db.prepare('UPDATE games SET added_at = ? WHERE id = ?').run(duplicate.addedAt, primaryId)
+    const redated = getGame(db, primaryId)
+    if (redated) return redated
+  }
+  return survivor
+}
+
 export function getPlatforms(db: Db): Platform[] {
   return (db.prepare('SELECT * FROM platforms ORDER BY sort_order ASC').all() as Record<string, unknown>[]).map(
     rowToPlatform

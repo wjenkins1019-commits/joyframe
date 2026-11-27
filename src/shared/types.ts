@@ -306,6 +306,8 @@ export interface ScanResult {
   added: number
   updated: number
   skipped: number
+  /** Stale sidecar entries folded into surviving games (ROM scans). */
+  removed: number
   errors: string[]
   elapsedMs: number
 }
