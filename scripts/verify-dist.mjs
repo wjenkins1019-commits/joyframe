@@ -948,9 +948,12 @@ async function main() {
   const problems = []
   const check = (name, ok, detail) => results.push({ name, ok, detail })
 
-  /** Seed one profile, boot the packaged app on it and run its checks. */
-  const verifyProfile = async ({ label, profile, seeder, checks }) => {
-    const seeded = spawnSync(process.execPath, [seeder, profile], { stdio: 'inherit' })
+  /**
+   * Seed one profile, boot the packaged app on it and run its checks. `seed` is
+   * the script plus any flags; the profile directory is spliced in after it.
+   */
+  const verifyProfile = async ({ label, profile, seed, checks }) => {
+    const seeded = spawnSync(process.execPath, [seed[0], profile, ...seed.slice(1)], { stdio: 'inherit' })
     check(`${label}: profile seeded`, seeded.status === 0, `exit=${seeded.status}`)
     if (seeded.status !== 0) return
     const expected = expectedViews(profile)
@@ -1022,31 +1025,31 @@ async function main() {
     await verifyProfile({
       label: 'demo',
       profile: path.join(ROOT, 'demo'),
-      seeder: 'scripts/seed-demo.ts',
+      seed: ['scripts/seed-demo.ts'],
       checks: checkDemoLibrary
     })
     await verifyProfile({
       label: '1.0.0 profile',
       profile: path.join(ROOT, '1.0.0'),
-      seeder: 'scripts/seed-legacy.ts',
+      seed: ['scripts/seed-legacy.ts'],
       checks: checkLegacyProfile
     })
     await verifyProfile({
       label: 'rom launch',
       profile: path.join(ROOT, 'rom-launch'),
-      seeder: 'scripts/seed-rom-launch.ts',
+      seed: ['scripts/seed-rom-launch.ts'],
       checks: checkRomLaunch
     })
     await verifyProfile({
       label: 'multidisc launch',
       profile: path.join(ROOT, 'multidisc-launch'),
-      seeder: 'scripts/seed-multidisc-launch.ts',
+      seed: ['scripts/seed-multidisc.ts'],
       checks: checkMultidiscLaunch
     })
     await verifyProfile({
       label: 'multidisc recovery',
       profile: path.join(ROOT, 'multidisc-recovery'),
-      seeder: 'scripts/seed-multidisc-recovery.ts',
+      seed: ['scripts/seed-multidisc.ts', '--legacy'],
       checks: checkMultidiscRecovery
     })
   } finally {
