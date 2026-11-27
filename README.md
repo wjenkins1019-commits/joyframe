@@ -365,7 +365,7 @@ credentials), launching a real Steam title, a real emulator/ROM, a physical cont
 | `npm run self-test` | Prove the suite's own guards still fail correctly: short check list, exit `2` on a missing prerequisite and on a busy port, unfinished-run reporting, stale package |
 | `npm run check` | Typecheck, guard self-test, smoke, freshness guard, pad suite, all three intro suites, then report whether `release/` still matches |
 | `npm run check:installed` | `npm run check`, then fail unless the installed copy matches `release/win-unpacked` |
-| `npm run certify` | Certify the shipped artifact: `check`, build, `dist`, the packaged probes (including `verify:intro-ui` against `release/win-unpacked`), `verify:dist-pad`, then `verify:installed-build`; prints `CERTIFIED` with the bundle's SHA-256 only when every stage passed |
+| `npm run certify` | Certify the shipped artifact: `check`, build, `dist`, the installer's project icon, signing readiness, the packaged probes (including `verify:intro-ui` against `release/win-unpacked`), `verify:dist-pad`, then `verify:installed-build`; prints `CERTIFIED` with the bundle's SHA-256 only when every stage passed |
 | `npm run icons` | Regenerate PNG/ICO brand assets from SVG — they are build inputs, so follow it with `npm run build` before any probe runs: `npm run icons && npm run build` |
 | `npm run verify:icons` | Fail when a committed PNG/ICO no longer matches the SVG it is rendered from, naming the file and the source; `npm run dist` runs it first through `predist` |
 | `npm run verify:installer` | Run after `npm run dist`: fail when the installer is missing or electron-builder packaged its default icon instead of `resources/icon.ico`, and confirm the icon resources are inside `app.asar` |

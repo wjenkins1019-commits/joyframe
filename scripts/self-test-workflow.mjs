@@ -517,6 +517,64 @@ if (release) {
     guardIndex >= 0 ? `guard step ${guardIndex}, build step ${buildIndex}` : 'guard step missing'
   )
 
+  // A tag from a red tree must not reach a draft. The gate has to run before
+  // the build, ask the API for this exact commit and fail on anything but a
+  // green conclusion.
+  const gateIndex = rWindowsSteps.findIndex((s) => s?.id === 'check-gate')
+  const gate = gateIndex >= 0 ? rWindowsSteps[gateIndex] : null
+  const gateText = runText(gate)
+  check(
+    'release requires a green check run for the commit before building',
+    gateIndex >= 0 &&
+      gateIndex < buildIndex &&
+      String(gate?.env?.GH_TOKEN ?? '') === '${{ github.token }}' &&
+      String(gate?.env?.SHA ?? '') === '${{ github.sha }}' &&
+      gateText.includes('check.yml/runs?head_sha=$SHA') &&
+      gateText.includes('conclusion') &&
+      gateText.includes('::error::'),
+    gate ? `gate step ${gateIndex} before build ${buildIndex}, sha ${gate?.env?.SHA ?? '(unset)'}` : 'gate step missing'
+  )
+
+  // The package that ships is signed, and check.yml only ever boots an unsigned
+  // one. These three probes are the only proof of the bytes staged below, so
+  // they must sit between `dist` and the first draft upload, each with a
+  // timeout inside the job and a failure log of its own.
+  const stageIndex = rWindowsSteps.findIndex((s) => String(s?.uses ?? '').startsWith('softprops/action-gh-release'))
+  const releaseProblems = []
+  for (const probe of [
+    { script: 'verify:dist', artifact: 'dist-profiles-artifacts-attempt' },
+    { script: 'verify:first-run', artifact: 'first-run-artifacts-attempt' },
+    { script: 'verify:intro-ui', artifact: 'intro-ui-artifacts-attempt', packaged: true }
+  ]) {
+    const step = rWindowsSteps.find((s) => runText(s) === `npm run ${probe.script}`)
+    if (!step) {
+      releaseProblems.push(`${probe.script} missing`)
+      continue
+    }
+    const index = rWindowsSteps.indexOf(step)
+    const timeout = step['timeout-minutes']
+    const uploadStep = rWindowsSteps.find((s) => artifactName(s) === `${probe.artifact}-${ATTEMPT}`)
+    if (!(index > buildIndex && index < stageIndex)) {
+      releaseProblems.push(`${probe.script} at ${index}, outside build ${buildIndex}..stage ${stageIndex}`)
+    }
+    if (!Number.isInteger(timeout) || timeout <= 0 || timeout >= rWindows['timeout-minutes']) {
+      releaseProblems.push(`${probe.script} timeout ${timeout ?? '(unset)'} of ${rWindows['timeout-minutes']}m`)
+    }
+    if (!uploadStep || !condition(uploadStep).includes(`steps.${step.id}.outcome == 'failure'`)) {
+      releaseProblems.push(`${probe.script} failure upload`)
+    }
+    // Without this the probe boots dev Electron and proves nothing about the
+    // package being staged.
+    if (probe.packaged && !String(step?.env?.JOYFRAME_EXE ?? '').includes('win-unpacked')) {
+      releaseProblems.push(`${probe.script} JOYFRAME_EXE ${step?.env?.JOYFRAME_EXE ?? '(unset)'}`)
+    }
+  }
+  check(
+    'release boots the signed package after dist and before staging the draft',
+    releaseProblems.length === 0 && stageIndex > buildIndex,
+    releaseProblems.join('; ') || `probes between build ${buildIndex} and stage ${stageIndex}`
+  )
+
   const azureStep = rWindowsSteps.find((s) => runText(s).includes('enable-azure-signing.mjs'))
   const azureEnv = Object.keys(azureStep?.env ?? {})
   const azureKeys = [
@@ -741,6 +799,8 @@ const RELEASE_CHECKS = [
   'release jobs are ordered windows-installer → verify-published → promote-release',
   'release keeps contents:write so draft lookups work',
   'release tag guard runs before the build and refuses mismatched versions',
+  'release requires a green check run for the commit before building',
+  'release boots the signed package after dist and before staging the draft',
   'release azure step is ungated and carries all 7 secrets',
   'release version/channel derivation matches the updater rule',
   'release beta manifest copy is prerelease-gated',

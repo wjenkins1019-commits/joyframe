@@ -34,16 +34,23 @@ const INSTALLED_ASAR = path.join(INSTALLED_DIR, 'resources', 'app.asar')
  * Each stage is one command that has to pass on its own. `check` covers the
  * dev build and the guards; the build is repeated so the package is made from
  * sources regardless of what an earlier stage happened to leave in out/; then
- * the installer, the packaged app, a first run on a clean profile, the welcome
- * name step, the intro dropdown's modes, the controller suite against the
- * package, the machine-wide bytes, and finally that installed copy booted — a
- * hash proves the right bytes, not that they still show an intro and open the
+ * the installer and the icon it was packaged with, whether the signing path is
+ * ready, the packaged app, a first run on a clean profile, the welcome name
+ * step, the intro dropdown's modes, the controller suite against the package,
+ * the machine-wide bytes, and finally that installed copy booted — a hash
+ * proves the right bytes, not that they still show an intro and open the
  * library.
  */
 const STAGES = [
   { script: 'check', label: 'dev-build checks and suite guards' },
   { script: 'build', label: 'production build' },
   { script: 'dist', label: 'packaged installer' },
+  // `dist` proves the tracked assets match their SVGs, not that electron-builder
+  // used them: without this, a certificate can cover an installer carrying the
+  // default Electron icon. Signing readiness is a second of static work and is
+  // the state the release machine depends on.
+  { script: 'verify:installer', label: 'installer carries the project icon' },
+  { script: 'verify:signing', label: 'signing path ready or cleanly unsigned' },
   { script: 'verify:dist', label: 'packaged app: demo and 1.0.0 profiles' },
   { script: 'verify:first-run', label: 'packaged app: first run' },
   { script: 'verify:intro-name-pad', label: 'packaged app: welcome name step' },

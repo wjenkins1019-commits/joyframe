@@ -1,5 +1,7 @@
-# Packages the Windows installer and stages it on a *draft* release, so the
-# download button never points at an unproven build. Manual runs stage the
+# Packages the Windows installer, boots that exact package with the packaged
+# probes (the signed bytes, not the unsigned package check.yml tested), and
+# only then stages it on a *draft* release, so the download button never points
+# at an unproven build. Manual runs stage the
 # current package version; a v* tag does the same for that tag. A second
 # job then downloads that draft asset, checks its bytes against the release
 # digest, installs it silently and boots the installed copy — and only when
@@ -46,7 +48,10 @@ jobs:
   windows-installer:
     name: Windows installer
     runs-on: windows-latest
-    timeout-minutes: 30
+    # 40 rather than 30: the gate below may wait up to 15 minutes for check.yml
+    # on a tag pushed right after a push to main, on top of the build and the
+    # packaged probes, and a job timeout ends the job before their uploads.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -75,6 +80,46 @@ jobs:
           else
             echo "no tag ($ref); staging package version $pkg as a draft"
           fi
+
+      # A tag can be pushed from a red tree, and without this the release would
+      # package and stage it with no suite result for the commit at all. The
+      # gate runs before any build work and waits for the run itself: a tag
+      # pushed right after a push to main normally arrives before check.yml has
+      # finished. A red or cancelled run, or none within 15 minutes, stops the
+      # release here rather than shipping unproven bytes.
+      - name: Require a green check run for this commit
+        id: check-gate
+        shell: bash
+        timeout-minutes: 17
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          deadline=$(( SECONDS + 900 ))
+          while :; do
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/check.yml/runs?head_sha=$SHA&per_page=1" \
+              --jq '.workflow_runs[0] // empty | "\(.status) \(.conclusion // "-") \(.html_url // "-")"' || true)"
+            if [[ -n "$run" ]]; then
+              read -r status conclusion url <<< "$run"
+              echo "check.yml for $SHA: status=$status conclusion=$conclusion $url"
+              if [[ "$status" == "completed" ]]; then
+                if [[ "$conclusion" == "success" ]]; then
+                  echo "check.yml passed for $SHA"
+                  exit 0
+                fi
+                echo "::error::check.yml concluded '$conclusion' for $SHA — refusing to stage a release from a red tree ($url)."
+                exit 1
+              fi
+            else
+              echo "no check.yml run for $SHA yet"
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::no completed check.yml run for $SHA after 15 minutes — push the commit to main, wait for check.yml, then re-run this release."
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Install dependencies
         run: npm ci
@@ -106,6 +151,63 @@ jobs:
 
       - name: Verify installer
         run: npm run verify:installer
+
+      # check.yml's packaged probes boot an *unsigned* package. Signing rewrites
+      # the exe that ships, so the bytes staged below have to be booted
+      # themselves: a signed build that no longer starts, or whose asar
+      # integrity check now disagrees with the signature, would otherwise reach
+      # the draft with every other job green.
+      - name: Packaged app — demo, ROM and 1.0.0 profiles
+        id: dist-profiles
+        timeout-minutes: 5
+        env:
+          JF_FAILURE_ARTIFACTS: dist-profiles-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:dist
+
+      - name: Upload packaged profile artifacts
+        if: failure() && steps.dist-profiles.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-profiles-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-dist.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
+      - name: Packaged app — first run
+        id: first-run
+        timeout-minutes: 3
+        env:
+          JF_FAILURE_ARTIFACTS: first-run-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:first-run
+
+      - name: Upload first-run artifacts
+        if: failure() && steps.first-run.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-first-run.log
+          if-no-files-found: warn
+          include-hidden-files: true
+
+      # `JOYFRAME_EXE` is what points this probe at release/win-unpacked
+      # instead of dev Electron; without it the step would prove nothing about
+      # the package being staged.
+      - name: Packaged app — intro dropdown modes
+        id: intro-ui
+        timeout-minutes: 3
+        env:
+          JOYFRAME_EXE: release/win-unpacked/JOYFRAME.exe
+          JF_FAILURE_ARTIFACTS: intro-ui-artifacts-attempt-${{ github.run_attempt }}
+        run: npm run verify:intro-ui
+
+      - name: Upload intro-ui artifacts
+        if: failure() && steps.intro-ui.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: intro-ui-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-intro-ui.log
+          if-no-files-found: warn
+          include-hidden-files: true
 
       # Derives the release kind from the version string: a hyphen means a
       # semver prerelease, and its first identifier is the update channel
