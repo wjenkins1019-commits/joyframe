@@ -35,6 +35,12 @@ const brief = (text, limit) => {
  * its whole budget and the probe goes on to check stale state, with nothing in
  * the log to show it. Name the probe, the read and the predicate on stderr so a
  * stall is visible in a passing run too.
+ *
+ * A step log is only read by whoever downloads it, so inside Actions the same
+ * read is announced where a passing run is actually looked at: a `warning`
+ * annotation on the run page and a section in the job summary. Neither is an
+ * error annotation and neither changes the exit code — a stall is something to
+ * correct, not a reason to fail a green suite.
  */
 function warnStalledRead({ label, expression, timeout, ready }) {
   fs.writeSync(
@@ -44,6 +50,29 @@ function warnStalledRead({ label, expression, timeout, ready }) {
       `  expression: ${brief(expression, 120)}\n` +
       `  predicate: ${brief(ready, 160)}\n`
   )
+  if (process.env.GITHUB_ACTIONS !== 'true') return
+
+  // A `::` inside a command payload would end the command early.
+  const payload = (text, limit) => brief(text, limit).replace(/::/g, ':')
+  console.log(
+    `::warning title=${escapeCommand(`${label} read settled at its deadline`, true)}::` +
+      escapeCommand(
+        `expression: ${payload(expression, 120)} | predicate: ${payload(ready, 160)} | deadline: ${timeout}ms — ` +
+          'the value may only have partly hydrated.'
+      )
+  )
+  appendSummary([
+    `## ${label} — a read settled at its ${timeout}ms deadline`,
+    '',
+    '> The predicate never matched, so the read returned a value that may only have partly hydrated.',
+    '',
+    `- Expression: ${code(expression)}`,
+    `- Predicate: ${code(ready)}`,
+    `- Deadline: ${timeout}ms`,
+    '',
+    'This notice does not fail the run.',
+    ''
+  ])
 }
 
 /**

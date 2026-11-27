@@ -138,10 +138,35 @@ const CASES = [
     name: 'a read that only settles at its deadline warns with the probe and predicate',
     exit: 0,
     stdout: ['stalled read: value={"open":true,"profileCard":false} waited=5000ms'],
+    // Outside Actions the warning belongs on stderr only, not in the log as a
+    // bare workflow command, and it must not turn a passing run red.
+    stdoutAbsent: ['::warning'],
     stderr: [
       '[cdp] warning: guard-fixture settled a read at its 5000ms deadline',
       'expression: detailState()',
       'predicate: (state) => Boolean(state?.open && state?.profileCard)'
+    ]
+  },
+  {
+    // The stderr line is only seen by whoever downloads the step log, so the
+    // same read has to reach the run page: a warning annotation and a summary
+    // section, with the step still exiting 0.
+    mode: 'stalled-read',
+    name: 'a stalled read is annotated and summarized without failing the step',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: [
+      '::warning title=guard-fixture read settled at its deadline::expression: detailState()',
+      'predicate: (state) => Boolean(state?.open && state?.profileCard)',
+      'deadline: 5000ms'
+    ],
+    stdoutAbsent: ['::error'],
+    summary: [
+      '## guard-fixture — a read settled at its 5000ms deadline',
+      '- Expression: `detailState()`',
+      '- Predicate: `(state) => Boolean(state?.open && state?.profileCard)`',
+      '- Deadline: 5000ms',
+      'This notice does not fail the run.'
     ]
   },
   {
