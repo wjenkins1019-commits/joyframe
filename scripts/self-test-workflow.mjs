@@ -80,6 +80,13 @@ const EXPECTED_ARTIFACTS = [
     job: 'installed-checks',
     paths: ['.verify-logs/verify-installer-matrix.log'],
     hidden: true
+  },
+  {
+    name: `intro-ui-artifacts-attempt-${ATTEMPT}`,
+    label: 'the intro-dropdown artifact keeps its name, path and hidden files',
+    job: 'installer',
+    paths: ['.verify-logs/verify-intro-ui.log'],
+    hidden: true
   }
 ]
 

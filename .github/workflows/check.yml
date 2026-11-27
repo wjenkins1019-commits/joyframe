@@ -12,8 +12,9 @@
 # that holds the game page's back-button checks, which is why it cannot stay a
 # local-only command. The installer job builds the package and then runs the
 # same controller suite against the packaged exe, so CI covers the asar payload
-# and not only dev Electron. The separate packaged profiles in `verify:dist` and
-# `verify:first-run` run here too.
+# and not only dev Electron. The separate packaged probes `verify:dist`,
+# `verify:first-run` and `verify:intro-ui` run here too, so the intro dropdown's
+# persistence is proven against the shipped payload rather than dev Electron.
 #
 # `verify:installed` was the one probe CI never ran: it looks at a machine-wide
 # copy, so it needs an install, and an install nobody ran by hand left the
@@ -267,6 +268,27 @@ jobs:
         id: intro-name-pad
         timeout-minutes: 3
         run: npm run verify:intro-name-pad
+
+      # The welcome step above covers the name field only, so the intro dropdown
+      # was the one packaged surface no probe drove here: a mode that stopped
+      # persisting would have shipped unnoticed. `JOYFRAME_EXE` is what makes
+      # this probe drive release/win-unpacked instead of dev Electron.
+      - name: Packaged app — intro dropdown modes
+        id: intro-ui
+        timeout-minutes: 3
+        env:
+          JOYFRAME_EXE: release/win-unpacked/JOYFRAME.exe
+          JF_FAILURE_ARTIFACTS: intro-ui-artifacts-attempt-${{ github.run_attempt }},installer-build-log-attempt-${{ github.run_attempt }}
+        run: npm run verify:intro-ui
+
+      - name: Upload intro-ui artifacts
+        if: failure() && steps.intro-ui.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: intro-ui-artifacts-attempt-${{ github.run_attempt }}
+          path: .verify-logs/verify-intro-ui.log
+          if-no-files-found: warn
+          include-hidden-files: true
 
       # Runs last on purpose: failure() here covers the build, the icon check
       # and every packaged suite, while an upload placed after the build

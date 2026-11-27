@@ -34,10 +34,11 @@ const INSTALLED_ASAR = path.join(INSTALLED_DIR, 'resources', 'app.asar')
  * Each stage is one command that has to pass on its own. `check` covers the
  * dev build and the guards; the build is repeated so the package is made from
  * sources regardless of what an earlier stage happened to leave in out/; then
- * the installer, the packaged app, a first run on a clean profile, the
- * controller suite against the package, the machine-wide bytes, and finally
- * that installed copy booted — a hash proves the right bytes, not that they
- * still show an intro and open the library.
+ * the installer, the packaged app, a first run on a clean profile, the welcome
+ * name step, the intro dropdown's modes, the controller suite against the
+ * package, the machine-wide bytes, and finally that installed copy booted — a
+ * hash proves the right bytes, not that they still show an intro and open the
+ * library.
  */
 const STAGES = [
   { script: 'check', label: 'dev-build checks and suite guards' },
@@ -46,10 +47,20 @@ const STAGES = [
   { script: 'verify:dist', label: 'packaged app: demo and 1.0.0 profiles' },
   { script: 'verify:first-run', label: 'packaged app: first run' },
   { script: 'verify:intro-name-pad', label: 'packaged app: welcome name step' },
+  { script: 'verify:intro-ui', label: 'packaged app: intro dropdown modes' },
   { script: 'verify:dist-pad', label: 'packaged app: controller suite' },
   { script: 'verify:installed-build', label: 'installed copy matches release/' },
   { script: 'verify:installed', label: 'installed app: intro, skip and cold start' }
 ]
+
+// Every packaged stage certifies release/win-unpacked, so point the probes at it
+// once for the run instead of repeating the variable per stage. Two stages are
+// not packaged and keep their own target: `check` drives dev Electron, because a
+// package left by an earlier run may predate these sources, and
+// `verify:installed` reads JOYFRAME_EXE as the *installed* copy's override, so
+// pointing it at release/ would boot the wrong copy and certify nothing.
+process.env.JOYFRAME_EXE = path.join(PACKAGED, 'JOYFRAME.exe')
+const NOT_PACKAGED = new Set(['check', 'verify:installed'])
 
 const version = JSON.parse(fs.readFileSync('package.json', 'utf8')).version
 const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`
@@ -101,7 +112,9 @@ for (const [index, stage] of STAGES.entries()) {
   const started = Date.now()
   // One command string rather than args + shell, which Node deprecates; the
   // script names are this file's own, so there is nothing to quote.
-  const result = spawnSync(`npm run ${stage.script}`, { stdio: 'inherit', shell: true })
+  const env = { ...process.env }
+  if (NOT_PACKAGED.has(stage.script)) delete env.JOYFRAME_EXE
+  const result = spawnSync(`npm run ${stage.script}`, { stdio: 'inherit', shell: true, env })
   const elapsed = Date.now() - started
   total += elapsed
 
