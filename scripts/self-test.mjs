@@ -139,7 +139,10 @@ const CASES = [
     exit: 0,
     stdout: ['stalled read: value={"open":true,"profileCard":false} waited=5000ms'],
     // Outside Actions the warning belongs on stderr only, not in the log as a
-    // bare workflow command, and it must not turn a passing run red.
+    // bare workflow command, and it must not turn a passing run red. The
+    // runner sets GITHUB_ACTIONS=true, so this case clears it instead of
+    // inheriting whatever machine it runs on.
+    env: { GITHUB_ACTIONS: '' },
     stdoutAbsent: ['::warning'],
     stderr: [
       '[cdp] warning: guard-fixture settled a read at its 5000ms deadline',
