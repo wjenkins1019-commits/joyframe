@@ -326,6 +326,9 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
   const rom = path.join(profile, ROM_FILE)
 
   const openDetail = async () => {
+    // The window exists before the shell mounts; driving it earlier silently
+    // no-ops, so wait for the sidebar before clicking anything.
+    await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean)
     await evaluate(`document.querySelector('button[aria-label="Library"]')?.click()`)
     await read(`document.querySelector('main[data-jf-view]')?.getAttribute('data-jf-view') === 'library'`, Boolean)
     const card = await read(
