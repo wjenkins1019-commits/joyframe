@@ -103,7 +103,9 @@ export function cleanTitle(raw: string): string {
   while (TITLE_EXTENSIONS.test(title)) title = title.replace(TITLE_EXTENSIONS, '')
   return title
     .replace(/\[(.*?)\]/g, ' ')
-    .replace(/\((USA|Europe|Japan|World|Rev [^)]*|v[0-9.]+|En|Fr|De|Es|It|Beta|Proto|Demo)[^)]*\)/gi, ' ')
+    // A region/revision tag must stand alone as a token: without the boundary
+    // check `(Deluxe Edition)` would lose its `De` prefix and vanish.
+    .replace(/\((USA|Europe|Japan|World|Rev [^)]*|v[0-9.]+|En|Fr|De|Es|It|Beta|Proto|Demo)(?=[\s,)])[^)]*\)/gi, ' ')
     .replace(/[_.]+/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .replace(/\s*-\s*$/, '')
@@ -307,10 +309,123 @@ export const ROM_EXTENSIONS = new Set([
  */
 export const NON_ROM_EXTENSIONS = new Set(['conf', 'bat'])
 
-/** True when a path's extension is one the ROM scanner imports. */
-export function isRomFile(file: string): boolean {
+/**
+ * True when a path is a ROM the scanner imports. `.gz` is only a ROM when it
+ * wraps a disc image — a stray `backup.tar.gz` is not a PS2 game.
+ */
+function isRomFile(file: string): boolean {
   const ext = path.extname(file).slice(1).toLowerCase()
-  return ROM_EXTENSIONS.has(ext)
+  if (!ROM_EXTENSIONS.has(ext)) return false
+  if (ext === 'gz') return /\.(iso|bin|img|cue|cdi)\.gz$/i.test(file)
+  return true
+}
+
+interface ScanItem {
+  file: string
+  platformId: string
+  title: string
+  size: number
+}
+
+/** A library entry to create: one file, or several discs of one game. */
+interface ScanUnit {
+  title: string
+  files: ScanItem[]
+}
+
+// `part` is deliberately absent: "(Part 1)" and "(Part 2)" are usually
+// separate releases, not discs of one game.
+const DISC_MARKER = /\((?:disc|disk|cd)\s*\d+[^)]*\)/gi
+// The same marker without brackets: `Game CD1`, `Game cd2`, `Game - Disc 3`.
+// A single digit only, so `WipEout CD32` keeps its name.
+const BARE_DISC_MARKER = /(?:^|[\s._-]+)(?:disc|disk|cd)[\s._-]*[1-9](?!\d)/gi
+
+/** `Final Fantasy IX (Disc 2)` / `Final Fantasy IX CD2` → `Final Fantasy IX`. */
+function baseTitle(title: string): string {
+  return title
+    .replace(DISC_MARKER, ' ')
+    .replace(BARE_DISC_MARKER, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[\s._-]+$/, '')
+    .trim()
+}
+
+/** `Final Fantasy IX (Disc 2)` → `Disc 2`. */
+function discLabel(title: string): string {
+  return `Disc ${discNumber(title)}`
+}
+
+function discNumber(title: string): number {
+  const bracketed = title.match(/\((?:disc|disk|cd)\s*(\d+)/i)
+  if (bracketed) return Number(bracketed[1])
+  // Bare markers are limited to one digit, so an Amiga `CD32` is not disc 32.
+  const bare = title.match(/(?:^|[\s._-])(?:disc|disk|cd)[\s._-]*([1-9])(?!\d)/i)
+  return bare ? Number(bare[1]) : 0
+}
+
+/**
+ * One entry per game: files that only differ by their disc marker and share a
+ * folder and platform become a single unit with one file per disc. Everything
+ * else stays one unit per file, so collection folders are untouched.
+ */
+function groupScanUnits(items: ScanItem[]): ScanUnit[] {
+  const groups = new Map<string, ScanItem[]>()
+  for (const item of items) {
+    const base = baseTitle(item.title)
+    const key =
+      discNumber(item.title) > 0
+        ? `${item.platformId}|${path.dirname(item.file).toLowerCase()}|${variantKey(base)}`
+        : `${item.platformId}|${path.dirname(item.file).toLowerCase()}|#${item.file.toLowerCase()}`
+    const list = groups.get(key) ?? []
+    list.push(item)
+    groups.set(key, list)
+  }
+  return [...groups.values()].flatMap((files): ScanUnit[] => {
+    const discs = files.filter((item) => discNumber(item.title) > 0)
+    // Only call it a set when the disc numbers actually differ; two files that
+    // merely share a base title stay separate games rather than being dropped.
+    const isSet = discs.length > 1 && new Set(discs.map((item) => discNumber(item.title))).size > 1
+    if (!isSet) return files.map((item) => ({ title: item.title, files: [item] }))
+    const ordered = [...files].sort((left, right) => discNumber(left.title) - discNumber(right.title))
+    return [{ title: baseTitle(ordered[0].title), files: ordered }]
+  })
+}
+
+/**
+ * Give a multi-disc game one `rom` method per disc. The rows are left exactly
+ * as they are when the disc list already matches, so a rescan does not churn
+ * ids or clobber a per-disc edit; only a changed set is rebuilt, keeping the
+ * default disc and any non-disc default the user chose.
+ */
+function syncDiscMethods(db: Db, game: Game, files: ScanItem[], emulator: Emulator | null): void {
+  const existing = db
+    .prepare(`SELECT target, is_default FROM launch_methods WHERE game_id = ? AND kind = 'rom'`)
+    .all(game.id) as { target: string; is_default: number }[]
+  const targets = existing.map((row) => row.target)
+  if (targets.length === files.length && files.every((item) => targets.includes(item.file))) return
+
+  const chosen = existing.find((row) => Number(row.is_default) === 1)?.target
+  const otherDefault = db
+    .prepare(`SELECT 1 FROM launch_methods WHERE game_id = ? AND is_default = 1 AND kind <> 'rom'`)
+    .get(game.id)
+  db.prepare(`DELETE FROM launch_methods WHERE game_id = ? AND kind = 'rom'`).run(game.id)
+  const insert = db.prepare(
+    'INSERT INTO launch_methods (id, game_id, label, kind, target, args, emulator_id, core, is_default) VALUES (?,?,?,?,?,?,?,?,?)'
+  )
+  const defaultFile = chosen && files.some((item) => item.file === chosen) ? chosen : files[0].file
+  for (const item of files) {
+    insert.run(
+      uid(),
+      game.id,
+      discLabel(item.title),
+      'rom',
+      item.file,
+      '',
+      emulator?.id ?? null,
+      emulator?.core ?? '',
+      !otherDefault && item.file === defaultFile ? 1 : 0
+    )
+  }
 }
 
 export async function scanRomFolders(
@@ -339,7 +454,7 @@ export async function scanRomFolders(
     }
     markLibraryPath(db, root, 'rom')
 
-    let pending: { file: string; platformId: string; title: string; size: number }[] = []
+    let pending: ScanItem[] = []
 
     await walk(
       root,
@@ -407,12 +522,12 @@ export async function scanRomFolders(
     // every game.
     const SHEET_EXTENSIONS = new Set(['cue', 'm3u'])
     const discGroup = (title: string): string => {
-      const match = variantKey(title).match(/(disc|disk|cd|part)\d+/)
+      const match = variantKey(title).match(/(disc|disk|cd)\d+/)
       return match ? match[0] : 'single'
     }
     // A sidecar file keeps the folder's name up front and adds a marker
     // (update, DLC, track/disc number …); anything else is another game.
-    const SIDECAR_RE = /^(update|dlc|patch|track|disc|disk|cd|part|demo|beta|proto|v\d|\d)/
+    const SIDECAR_RE = /^(update|dlc|patch|track|disc|disk|cd|demo|beta|proto|v\d|\d)/
     const relatesToFolder = (title: string, folderKey: string): boolean => {
       const key = variantKey(title)
       if (key === folderKey) return true
@@ -463,25 +578,51 @@ export async function scanRomFolders(
       })
     }
 
-    for (const item of pending) {
+    // Multi-disc sets: discs of one game in one folder import as a single
+    // library entry carrying a launch method per disc, so one cover, one
+    // playtime and one favourite cover the whole game.
+    const units = groupScanUnits(pending)
+
+    for (const unit of units) {
       if (shouldCancel?.()) break
-      const existing = findBySource(db, 'rom-scan', item.file)
-      if (existing) {
+      const primary = unit.files[0]
+      const emulator = findEmulatorForPlatform(db, primary.platformId)
+      const entries = unit.files
+        .map((item) => findBySource(db, 'rom-scan', item.file))
+        .filter((game): game is Game => Boolean(game))
+
+      if (entries.length) {
+        let survivor = entries[0]
+        // Migration: a library scanned by an older build has one entry per
+        // disc. Fold the extra discs into the first, which keeps the summed
+        // playtime and the merged metadata, then give it a method per disc.
+        for (const duplicate of entries.slice(1)) {
+          survivor = mergeGames(db, survivor.id, duplicate.id)
+        }
+        if (unit.files.length > 1) {
+          syncDiscMethods(db, survivor, unit.files, emulator)
+          // An entry carried over from a per-disc scan still says "(Disc 1)";
+          // a title the user edited is left exactly as they wrote it.
+          if (discNumber(survivor.title) > 0) {
+            survivor = updateGameRecord(db, survivor.id, { title: titleCase(unit.title) })
+          }
+        }
         skipped += 1
         continue
       }
-      const emulator = findEmulatorForPlatform(db, item.platformId)
-      insertGame(db, {
-        title: titleCase(item.title),
-        platformId: item.platformId,
+
+      const game = insertGame(db, {
+        title: titleCase(unit.title),
+        platformId: primary.platformId,
         source: 'rom-scan',
-        sourceId: item.file,
-        romPath: item.file,
-        installDir: path.dirname(item.file),
+        sourceId: primary.file,
+        romPath: primary.file,
+        installDir: path.dirname(primary.file),
         emulatorId: emulator?.id ?? null,
         emulatorCore: emulator?.core ?? '',
         installed: true
       })
+      if (unit.files.length > 1) syncDiscMethods(db, game, unit.files, emulator)
       added += 1
       if (added % 10 === 0) {
         emit({
@@ -490,7 +631,7 @@ export async function scanRomFolders(
           scanned,
           found: added,
           message: `Indexed ${added} ROMs…`,
-          current: item.file
+          current: primary.file
         })
         await yieldToLoop()
       }
@@ -539,7 +680,14 @@ export async function scanRomFolders(
       const file = game.sourceId || game.romPath
       if (!file) continue
       if (!file.toLowerCase().startsWith(rootPrefix) && !game.installDir.toLowerCase().startsWith(rootPrefix)) continue
-      const onDisk = fs.existsSync(file)
+      // A multi-disc game is only missing when none of its discs is on disk.
+      let onDisk = fs.existsSync(file)
+      if (!onDisk) {
+        const discs = db
+          .prepare(`SELECT target FROM launch_methods WHERE game_id = ? AND kind = 'rom'`)
+          .all(game.id) as { target: string }[]
+        onDisk = discs.some((disc) => disc.target && fs.existsSync(disc.target))
+      }
       const flagged = Boolean(game.extra.missingRom)
       if (!onDisk && !flagged) {
         updateGameRecord(db, game.id, { installed: false, extra: { ...game.extra, missingRom: true } })

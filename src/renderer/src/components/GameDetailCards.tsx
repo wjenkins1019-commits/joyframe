@@ -297,7 +297,9 @@ export function DetailCards(props: DetailCardsProps): React.JSX.Element {
             {game.launchMethods.map((method) => (
               <div key={method.id} className="rounded-lg border border-white/8 bg-black/25 p-2.5">
                 <div className="flex items-center gap-2">
-                  <Badge tone={method.isDefault ? 'red' : 'dark'}>{method.isDefault ? 'Default' : method.kind}</Badge>
+                  <Badge tone={method.isDefault ? 'red' : 'dark'}>
+                    {method.isDefault ? 'Default' : method.kind === 'rom' ? 'Disc' : method.kind}
+                  </Badge>
                   <span className="min-w-0 flex-1 truncate text-xs font-semibold text-white/85">
                     {method.label || method.kind}
                   </span>

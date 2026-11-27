@@ -126,7 +126,9 @@ npm run smoke
   the scanner's filter from drifting apart (only DOSBox `.conf`/`.bat` launch files are deliberately excluded).
 - One file per game: when a title exists in several formats in the same folder only the preferred one imports.
   A folder named after its game (ROM plus update/DLC/track sidecars) imports once — the disc sheet when there is
-  one, otherwise the largest file — with one entry per disc for multi-disc sets.
+  one, otherwise the largest file. A multi-disc set (`(Disc 1)`, `(Disc 2)` … in the same folder) is one library
+  entry with a launch method per disc, so cover, playtime and metadata are shared; re-scanning a library that was
+  imported one-card-per-disc folds the discs into the first entry instead of duplicating it.
   Rescanning folds stale sidecar entries from older scans into the surviving game, keeping playtime and metadata.
   A ROM that is no longer on disk is marked **ROM missing** (never deleted — playtime, metadata and notes stay) and its
   launch is refused with the path, while a file that returns clears the mark on the next scan.

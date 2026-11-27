@@ -73,19 +73,22 @@ function resolveEmulator(
   emulatorId: string | null,
   coreOverride: string,
   templateOverride: string,
-  settings: AppSettings | undefined
+  settings: AppSettings | undefined,
+  /** The disc to run; defaults to the game's own ROM. */
+  romOverride = ''
 ): { exe: string; args: string[]; cwd: string } {
   if (!emulatorId) throw new Error('No emulator is configured for this game. Assign one in the game settings.')
   const row = db.prepare('SELECT * FROM emulators WHERE id = ?').get(emulatorId) as Record<string, unknown> | undefined
   if (!row) throw new Error('The selected emulator no longer exists.')
   const emulator = rowToEmulator(row)
   if (!fs.existsSync(emulator.path)) throw new Error(`Emulator executable missing: ${emulator.path}`)
-  if (!game.romPath) throw new Error('This game has no ROM file to launch.')
+  const romPath = romOverride || game.romPath
+  if (!romPath) throw new Error('This game has no ROM file to launch.')
   // Handing the emulator a path that is gone opens its empty window or fails
   // silently, so say what happened instead of "launching" a dead file.
-  if (!fs.existsSync(game.romPath)) {
+  if (!fs.existsSync(romPath)) {
     throw new Error(
-      `ROM file not found: ${game.romPath}. Move it back or rescan the folder — the game's playtime and metadata are kept.`
+      `ROM file not found: ${romPath}. Move it back or rescan the folder — the game's playtime and metadata are kept.`
     )
   }
 
@@ -101,7 +104,7 @@ function resolveEmulator(
   // turn a game launch into an emulator launch.
   const passesRom = /\{rom\}/.test(template)
   const expanded = template
-    .replace(/\{rom\}/g, game.romPath)
+    .replace(/\{rom\}/g, romPath)
     .replace(/\{core\}/g, corePath)
     .replace(/\{game\}/g, game.title)
     .replace(/\{dir\}/g, game.installDir)
@@ -112,7 +115,7 @@ function resolveEmulator(
   // A per-game choice wins; otherwise the global Emulation setting decides
   // whether a template without {rom} still opens the game or a bare emulator.
   const launchDirectly = game.extra.launchRomDirectly ?? settings?.launchRomsDirectly ?? true
-  if (!passesRom && launchDirectly) args.push(game.romPath)
+  if (!passesRom && launchDirectly) args.push(romPath)
 
   // A verified fullscreen preset for this emulator starts the game fullscreen.
   // Emulators without one get no extra arguments, so the launch is unchanged.
@@ -153,16 +156,27 @@ export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): 
         description: defaultMethod.label || 'Protocol'
       }
     }
-    if (defaultMethod.kind === 'emulator') {
+    if (defaultMethod.kind === 'emulator' || defaultMethod.kind === 'rom') {
+      // A disc method launches the emulator with that disc instead of the
+      // game's first file, so multi-disc sets keep one card between discs.
       const run = resolveEmulator(
         db,
         game,
         defaultMethod.emulatorId ?? game.emulatorId,
         defaultMethod.core,
         defaultMethod.args,
-        settings
+        settings,
+        defaultMethod.kind === 'rom' ? defaultMethod.target : ''
       )
-      return { kind: 'spawn', target: run.exe, args: run.args, cwd: run.cwd, source: 'emulator', watchDir: '', description: 'Emulator' }
+      return {
+        kind: 'spawn',
+        target: run.exe,
+        args: run.args,
+        cwd: run.cwd,
+        source: 'emulator',
+        watchDir: '',
+        description: defaultMethod.kind === 'rom' ? defaultMethod.label || 'Emulator' : 'Emulator'
+      }
     }
     if (!fs.existsSync(defaultMethod.target)) {
       throw new Error(`Launch target not found: ${defaultMethod.target}`)

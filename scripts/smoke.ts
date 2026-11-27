@@ -32,7 +32,7 @@ import {
   refreshAll,
   steamStoreMatch
 } from '../src/main/services/metadata.ts'
-import { insertGame, queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
+import { deleteGame, insertGame, queryGames, updateGameRecord, uid } from '../src/main/services/repo.ts'
 import { listOpenSessions, reconcileOpenSessions, startSession } from '../src/main/services/sessions.ts'
 import { scanSaves, listSaves } from '../src/main/services/saves.ts'
 import {
@@ -109,6 +109,16 @@ write(path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 2).c
 // Atari Jaguar dumps use a bare .rom extension; the platform claims it, so
 // the scan must accept it.
 write(path.join(romRoot, 'jaguar', 'Tempest 2000.rom'), 'rom', 2048)
+// Disc sets in a collection folder (not a per-game folder), with region tags
+// on either side of the disc marker and with bracketless CD spellings.
+write(path.join(romRoot, 'ps1', 'Junction Quest (USA) (Disc 1 of 2).cue'), 'cue', 300)
+write(path.join(romRoot, 'ps1', 'Junction Quest (Disc 2 of 2) (USA).cue'), 'cue', 300)
+write(path.join(romRoot, 'ps1', 'Rift Runner CD1.iso'), 'iso', 4096)
+write(path.join(romRoot, 'ps1', 'Rift Runner cd2.iso'), 'iso', 4096)
+// A parenthetical that starts with a region-ish prefix must survive cleaning.
+write(path.join(romRoot, 'ps1', 'Broken Sword (Deluxe Edition).cue'), 'cue', 300)
+// `CD32` is a platform, not disc 32: the bare-marker rule must leave it alone.
+write(path.join(romRoot, 'ps1', 'WipEout CD32.iso'), 'iso', 4096)
 write(path.join(romRoot, 'bios', 'scph1001.bin'), 'bios', 512)
 write(path.join(romRoot, 'snes', 'notes.txt'), 'not a rom')
 
@@ -154,12 +164,13 @@ await check('PC scan picks the executable matching the folder name', () => {
 await check('ROM scan detects platforms from extensions and folder hints', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const byPlatform = new Map(romGames.map((game) => [game.title, game.platformId]))
-  assert.equal(romGames.length, 12)
+  assert.equal(romGames.length, 15)
   assert.equal(byPlatform.get('Chrono Trigger'), 'snes')
   assert.equal(byPlatform.get('Super Mario Bros'), 'nes')
   assert.equal(byPlatform.get('Pokemon Emerald'), 'gba')
   assert.equal(byPlatform.get('Shadow of the Colossus'), 'ps2')
   assert.equal(byPlatform.get('Final Fantasy VII (Disc 1)'), 'ps1')
+  assert.equal(byPlatform.get('Final Fantasy IX'), 'ps1')
   assert.equal(byPlatform.get('Metroid Dread'), 'switch')
   assert.equal(byPlatform.get('Tempest 2000'), 'atarijaguar')
 })
@@ -221,12 +232,102 @@ await check('single-game folders import one ROM (largest wins, sheet over track 
   assert.ok(chrono[0].romPath.toLowerCase().endsWith('.cue'))
 })
 
-await check('multi-disc folders keep one entry per disc', () => {
+await check('multi-disc sets import as one game with a launch method per disc', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const ff9 = romGames.filter((game) => game.title.startsWith('Final Fantasy IX'))
-  assert.equal(ff9.length, 2)
-  assert.ok(ff9.some((game) => game.title.includes('Disc 1')))
-  assert.ok(ff9.some((game) => game.title.includes('Disc 2')))
+  assert.equal(ff9.length, 1)
+  const [game] = ff9
+  assert.equal(game.title, 'Final Fantasy IX')
+  const discs = game.launchMethods.filter((method) => method.kind === 'rom')
+  assert.equal(discs.length, 2)
+  assert.deepEqual(discs.map((method) => method.label), ['Disc 1', 'Disc 2'])
+  assert.equal(discs.filter((method) => method.isDefault).length, 1)
+  assert.ok(discs[0].target.endsWith('Final Fantasy IX (Disc 1).cue'))
+  assert.ok(discs[1].target.endsWith('Final Fantasy IX (Disc 2).cue'))
+
+  // The default disc is what a launch hands the emulator.
+  const command = buildLaunchCommand(db, game)
+  assert.ok(command.args.includes(discs[0].target))
+  assert.equal(command.args.includes(discs[1].target), false)
+})
+
+await check('disc sets group through region tags and bare CD spellings', () => {
+  const romGames = queryGames(db, { source: 'rom-scan' }, true)
+  const byTitle = (title: string): (typeof romGames)[number][] => romGames.filter((game) => game.title === title)
+
+  // Region tag before one marker and after the other.
+  const junction = byTitle('Junction Quest')
+  assert.equal(junction.length, 1)
+  assert.deepEqual(
+    junction[0].launchMethods.map((method) => method.label),
+    ['Disc 1', 'Disc 2']
+  )
+
+  // `CD1` / `cd2` without brackets, in a collection folder.
+  const rift = byTitle('Rift Runner')
+  assert.equal(rift.length, 1)
+  assert.equal(rift[0].launchMethods.filter((method) => method.kind === 'rom').length, 2)
+  assert.ok(rift[0].launchMethods.some((method) => method.target.endsWith('Rift Runner cd2.iso')))
+
+  // Single-disc titles keep a meaningful parenthetical.
+  assert.equal(byTitle('Broken Sword (Deluxe Edition)').length, 1)
+  assert.equal(romGames.some((game) => game.title === 'Broken Sword'), false)
+
+  // And `CD32` is a platform suffix, not a disc marker to strip or group on.
+  assert.equal(byTitle('WipEout CD32').length, 1)
+  assert.equal(byTitle('WipEout').length, 0, 'CD32 was mistaken for a disc marker')
+})
+
+await check('a different disc launches its own file', () => {
+  const game = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  const disc2 = game.launchMethods.find((method) => method.label === 'Disc 2')
+  assert.ok(disc2)
+  const switched = {
+    ...game,
+    launchMethods: game.launchMethods.map((method) => ({ ...method, isDefault: method.id === disc2.id }))
+  }
+  const command = buildLaunchCommand(db, switched)
+  assert.ok(command.args.includes(disc2.target))
+  assert.equal(command.args.includes(game.romPath), false)
+})
+
+await check('a library scanned per disc migrates into one entry on rescan', async () => {
+  const grouped = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  const disc1 = path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 1).cue')
+  const disc2 = path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 2).cue')
+  // Rebuild the shape an older build produced: one game per disc.
+  deleteGame(db, grouped.id)
+  const legacy1 = insertGame(db, {
+    title: 'Final Fantasy IX (Disc 1)',
+    platformId: 'ps1',
+    source: 'rom-scan',
+    sourceId: disc1,
+    romPath: disc1,
+    installDir: path.dirname(disc1),
+    playtimeSeconds: 600,
+    developer: 'Square',
+    notes: 'legacy note'
+  })
+  const legacy2 = insertGame(db, {
+    title: 'Final Fantasy IX (Disc 2)',
+    platformId: 'ps1',
+    source: 'rom-scan',
+    sourceId: disc2,
+    romPath: disc2,
+    installDir: path.dirname(disc2),
+    playtimeSeconds: 300
+  })
+  const result = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(result.added, 0)
+  const merged = queryGames(db, { search: 'Final Fantasy IX' }, true)
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].title, 'Final Fantasy IX')
+  assert.equal(merged[0].id, legacy1.id, 'the first disc should survive')
+  assert.equal(merged[0].playtimeSeconds, 900, 'playtime from both discs is kept')
+  assert.equal(merged[0].developer, 'Square')
+  assert.equal(merged[0].notes, 'legacy note')
+  assert.equal(merged[0].launchMethods.filter((method) => method.kind === 'rom').length, 2)
+  assert.equal(queryGames(db, {}, true).filter((game) => game.id === legacy2.id).length, 0)
 })
 
 await check('ROMs are auto-mapped to a compatible emulator and core', () => {
