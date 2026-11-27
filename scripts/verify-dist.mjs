@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
  * Packaged-build verification: boots release/win-unpacked/JOYFRAME.exe against
- * two throwaway profiles and checks what the real installer payload renders.
+ * throwaway profiles and checks what the real installer payload renders.
  *
  *  - demo:  the in-app demo library — home rows, decoded artwork, Console Mode.
  *  - 1.0.0: a database built from scripts/fixtures/schema-1.0.0.sql, the schema
  *           the shipped build created, to prove an old profile still loads its
  *           library and home rows after an upgrade.
+ *  - rom launch: a seeded ROM game behind a stub emulator, proving Play hands
+ *           the emulator the ROM and the per-game switch persists.
+ *  - multidisc launch: a two-disc set the packaged scan must group into one
+ *           card with a Disc row per disc, proving the default-disc switch
+ *           changes the file the stub receives.
  *
  * Finish `npm run dist` first, then run:
  *
@@ -72,6 +77,14 @@ const PROFILE_CHECKS = {
     'Save profile reports the switch was saved',
     'the saved switch survives reopening the game page',
     'opting out launches the emulator without the ROM'
+  ],
+  'multidisc launch': [
+    'packaged scan imports the set as one game',
+    'library shows one card for the two-disc set',
+    'game page lists one Disc row per disc',
+    'Play launches the default disc',
+    'Set default moves to the other disc',
+    'Play launches the newly defaulted disc'
   ]
 }
 
@@ -95,6 +108,11 @@ const SHELF_SAMPLE = 6
 const ROM_GAME = 'ROM Launch Probe'
 const ROM_FILE = path.join('roms', `${ROM_GAME}.nes`)
 const ROM_RECORD = 'stub-args.json'
+
+/** The multi-disc profile's set: two cues the packaged scan must group. */
+const MULTI_TITLE = 'Multidisc Launch Probe'
+const MULTI_DISCS = [1, 2].map((disc) => path.join('roms', 'ps1', `${MULTI_TITLE} (Disc ${disc}).cue`))
+const MULTI_RECORD = 'stub-args.json'
 
 /** The game page's ROM switch and its launch button, as rendered in the packaged build. */
 const ROM_DETAIL = `(() => {
@@ -446,6 +464,169 @@ async function checkRomLaunch({ label, evaluate, read, check, profile }) {
   )
 }
 
+/**
+ * The two-disc set has to hold together in the packaged build, not just in
+ * buildLaunchCommand: the packaged scan must group the cues into one card
+ * with a Disc row per disc, and switching the default disc must change the
+ * file the stub emulator receives.
+ */
+async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
+  const record = path.join(profile, MULTI_RECORD)
+  const roms = path.join(profile, 'roms')
+  const disc = (index) => path.join(profile, MULTI_DISCS[index])
+
+  const scanned = await evaluate(`window.joyframe.scans.romFolders([${JSON.stringify(roms)}])`)
+  check(
+    `${label}: packaged scan imports the set as one game`,
+    scanned?.added === 1 && (scanned?.errors?.length ?? 0) === 0,
+    `added=${scanned?.added} errors=${JSON.stringify(scanned?.errors)}`
+  )
+  if (scanned?.added !== 1) return
+
+  // The window exists before the shell mounts; driving it earlier silently
+  // no-ops, so wait for the sidebar before clicking anything.
+  await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean)
+  const clicked = await evaluate(`(() => {
+    const button = document.querySelector('button[aria-label="Library"]')
+    if (!button) return 'missing'
+    button.click()
+    return 'clicked'
+  })()`)
+  const library = await read(viewProbe, (value) => value.view === 'library' && value.cards.length > 0)
+  check(
+    `${label}: library shows one card for the two-disc set`,
+    library?.view === 'library' && library?.cards.length === 1 && library.cards[0].startsWith(MULTI_TITLE),
+    `click=${clicked} view=${library?.view} cards=${library ? library.cards.join(' | ') : 'none'}`
+  )
+  if (library?.cards.length !== 1) return
+
+  await evaluate(`(() => {
+    const entry = [...document.querySelectorAll('[data-game-id]')].find((card) =>
+      card.getAttribute('aria-label')?.startsWith(${JSON.stringify(MULTI_TITLE)})
+    )
+    entry?.click()
+    return Boolean(entry)
+  })()`)
+  // Method rows are the only `div.rounded-lg` blocks naming a cue file; the
+  // badge is the row header's first span (a bare text search would also catch
+  // the save-state slot's "Default" option elsewhere on the page).
+  const readMethods = `(() => {
+    const detail = document.querySelector('[data-jf-detail="1"]')
+    if (!detail) return null
+    const rows = [...detail.querySelectorAll('div.rounded-lg')].filter((row) =>
+      row.querySelector('p')?.textContent.includes('.cue')
+    )
+    return rows.map((row) => {
+      const spans = [...row.querySelectorAll(':scope > div > span')]
+      return {
+        badge: spans[0]?.textContent.trim() ?? null,
+        label: spans[1]?.textContent.trim() ?? null,
+        file: row.querySelector('p')?.textContent.trim() ?? null
+      }
+    })
+  })()`
+  const methods = await read(readMethods, Boolean)
+  const badges = (methods ?? []).map((entry) => entry.badge).sort()
+  const labels = (methods ?? []).map((entry) => entry.label).sort()
+  check(
+    `${label}: game page lists one Disc row per disc`,
+    (methods?.length ?? 0) === 2 && badges.join('|') === 'Default|Disc' && labels.join('|') === 'Disc 1|Disc 2',
+    methods ? `badges=${badges.join(',')} labels=${labels.join(',')}` : 'game page did not open'
+  )
+  if (methods?.length !== 2) return
+
+  /** Clicks Play/Resume once the launcher has returned to idle and the button is enabled. */
+  const clickPlay = () =>
+    read(
+      `(() => {
+        const detail = document.querySelector('[data-jf-detail="1"]')
+        const play = detail && [...detail.querySelectorAll('button')].find(
+          (entry) => ['Play', 'Resume'].includes(entry.textContent.trim()) && !entry.disabled
+        )
+        if (!play) return null
+        play.click()
+        return play.textContent.trim()
+      })()`,
+      Boolean
+    )
+
+  /** The stub writes on process start; wait for that, not for a timer. */
+  const waitForArgs = async () => {
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if (fs.existsSync(record)) {
+        try {
+          return JSON.parse(fs.readFileSync(record, 'utf8'))
+        } catch {
+          /* the stub is still writing */
+        }
+      }
+      await delay(100)
+    }
+    return null
+  }
+
+  fs.rmSync(record, { force: true })
+  const firstPlay = await clickPlay()
+  const firstArgs = await waitForArgs()
+  check(
+    `${label}: Play launches the default disc`,
+    Boolean(firstPlay) &&
+      Array.isArray(firstArgs) &&
+      firstArgs.length === 1 &&
+      path.resolve(firstArgs[0]) === path.resolve(disc(0)),
+    `button=${firstPlay ?? 'missing'} stub=${JSON.stringify(firstArgs)}`
+  )
+
+  const switched = await evaluate(`(() => {
+    const detail = document.querySelector('[data-jf-detail="1"]')
+    if (!detail) return null
+    const button = [...detail.querySelectorAll('button')].find((entry) => entry.textContent.trim() === 'Set default')
+    const row = button ? button.closest('div.rounded-lg') : null
+    const want = row?.querySelector('p')?.textContent ?? ''
+    if (!button || !want.includes('Disc 2')) return null
+    button.click()
+    return true
+  })()`)
+  const moved = await read(
+    `(() => {
+      const detail = document.querySelector('[data-jf-detail="1"]')
+      if (!detail) return null
+      const rows = [...detail.querySelectorAll('div.rounded-lg')].filter((row) =>
+        row.querySelector('p')?.textContent.includes('.cue')
+      )
+      const row = rows.find((entry) =>
+        entry.querySelector('p')?.textContent.includes(${JSON.stringify(path.basename(disc(1)))})
+      )
+      const badge = row?.querySelector(':scope > div > span')?.textContent.trim()
+      return badge === 'Default' ? true : null
+    })()`,
+    Boolean
+  )
+  check(
+    `${label}: Set default moves to the other disc`,
+    Boolean(switched && moved),
+    switched && moved
+      ? 'default badge on the second disc'
+      : switched
+        ? 'default badge still on the first disc'
+        : 'Set default button not found on the second disc'
+  )
+  if (!moved) return
+
+  fs.rmSync(record, { force: true })
+  const secondPlay = await clickPlay()
+  const secondArgs = await waitForArgs()
+  check(
+    `${label}: Play launches the newly defaulted disc`,
+    Boolean(secondPlay) &&
+      Array.isArray(secondArgs) &&
+      secondArgs.length === 1 &&
+      path.resolve(secondArgs[0]) === path.resolve(disc(1)),
+    `button=${secondPlay ?? 'missing'} stub=${JSON.stringify(secondArgs)}`
+  )
+}
+
 async function main() {
   await preflight({
     label: 'verify:dist',
@@ -515,6 +696,12 @@ async function main() {
       profile: path.join(ROOT, 'rom-launch'),
       seeder: 'scripts/seed-rom-launch.ts',
       checks: checkRomLaunch
+    })
+    await verifyProfile({
+      label: 'multidisc launch',
+      profile: path.join(ROOT, 'multidisc-launch'),
+      seeder: 'scripts/seed-multidisc-launch.ts',
+      checks: checkMultidiscLaunch
     })
   } finally {
     removeDir(ROOT)
