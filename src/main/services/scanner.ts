@@ -7,6 +7,7 @@ import { detectPlatform, platformById } from './platforms.ts'
 import {
   findBySource,
   findDuplicate,
+  getGame,
   insertGame,
   mergeGames,
   nowIso,
@@ -17,6 +18,17 @@ import {
 } from './repo.ts'
 
 export type ProgressEmitter = (progress: ScanProgress) => void
+
+/**
+ * Hooks the app layers onto a ROM scan. `beforeFirstMerge` runs once, just
+ * before the scan would permanently fold one library entry into another —
+ * the app uses it to snapshot the database, so a mis-grouped multi-disc set
+ * can be restored. If the hook throws, the scan stops before changing
+ * anything and reports the failure in `errors`.
+ */
+export interface RomScanHooks {
+  beforeFirstMerge?: () => void | Promise<void>
+}
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -124,6 +136,17 @@ function titleCase(value: string): string {
       return word[0].toUpperCase() + word.slice(1)
     })
     .join(' ')
+}
+
+/**
+ * A game that already uses this file as one of its discs. Scanning after a
+ * disc was deleted must not create a second card for the remaining discs.
+ */
+function findByDiscTarget(db: Db, file: string): Game | null {
+  const row = db.prepare(`SELECT game_id FROM launch_methods WHERE kind = 'rom' AND target = ?`).get(file) as
+    | { game_id: string }
+    | undefined
+  return row ? getGame(db, row.game_id) : null
 }
 
 function findEmulatorForPlatform(db: Db, platformId: string): Emulator | null {
@@ -433,7 +456,8 @@ export async function scanRomFolders(
   paths: string[],
   emit: ProgressEmitter,
   shouldCancel?: () => boolean,
-  preferences: Record<string, string[]> = {}
+  preferences: Record<string, string[]> = {},
+  hooks: RomScanHooks = {}
 ): Promise<ScanResult> {
   const started = Date.now()
   const errors: string[] = []
@@ -444,6 +468,44 @@ export async function scanRomFolders(
   let removed = 0
   let missing = 0
   let restored = 0
+  let mergeGuarded = false
+
+  // The first permanent fold of a scan is the risky one: once entries merge,
+  // only a backup can undo a mis-grouped set. Ask the app to snapshot the
+  // database exactly once, and stop before touching anything if it fails.
+  const ensureMergeBackup = async (): Promise<boolean> => {
+    if (mergeGuarded) return true
+    mergeGuarded = true
+    if (!hooks.beforeFirstMerge) return true
+    try {
+      await hooks.beforeFirstMerge()
+      emit({
+        phase: 'matching',
+        kind: 'rom',
+        scanned,
+        found: 0,
+        message: 'Library backup saved before merging entries…'
+      })
+      return true
+    } catch (error) {
+      errors.push(
+        `Library backup failed, so the rescan stopped before changing any entries: ${(error as Error).message}`
+      )
+      return false
+    }
+  }
+
+  const finish = (): ScanResult => {
+    emit({
+      phase: 'done',
+      kind: 'rom',
+      scanned,
+      found: added,
+      message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats and sidecar files kept out)${removed > 0 ? `, ${removed} stale sidecar${removed === 1 ? '' : 's'} folded into surviving games` : ''}${missing > 0 ? `, ${missing} ROM${missing === 1 ? '' : 's'} missing from disk` : ''}${restored > 0 ? `, ${restored} back on disk` : ''}`,
+      errors
+    })
+    return { kind: 'rom', added, updated, skipped, removed, missing, errors, elapsedMs: Date.now() - started }
+  }
 
   emit({ phase: 'start', kind: 'rom', scanned: 0, found: 0, message: 'Scanning ROM folders…' })
 
@@ -587,16 +649,26 @@ export async function scanRomFolders(
       if (shouldCancel?.()) break
       const primary = unit.files[0]
       const emulator = findEmulatorForPlatform(db, primary.platformId)
-      const entries = unit.files
-        .map((item) => findBySource(db, 'rom-scan', item.file))
-        .filter((game): game is Game => Boolean(game))
+      // A disc can match the same game twice (its first file is the entry's
+      // source, the others are its disc methods), so collapse by game id.
+      const entries = [
+        ...new Map(
+          unit.files
+            .map((item) => findBySource(db, 'rom-scan', item.file) ?? findByDiscTarget(db, item.file))
+            .filter((game): game is Game => Boolean(game))
+            .map((game) => [game.id, game] as const)
+        ).values()
+      ]
 
       if (entries.length) {
         let survivor = entries[0]
         // Migration: a library scanned by an older build has one entry per
         // disc. Fold the extra discs into the first, which keeps the summed
         // playtime and the merged metadata, then give it a method per disc.
+        // The first fold of a scan is guarded: the app snapshots the
+        // database before anything is permanently rewritten.
         for (const duplicate of entries.slice(1)) {
+          if (!(await ensureMergeBackup())) return finish()
           survivor = mergeGames(db, survivor.id, duplicate.id)
         }
         if (unit.files.length > 1) {
@@ -660,6 +732,7 @@ export async function scanRomFolders(
       )
       const survivorGame = survivor ? findBySource(db, 'rom-scan', survivor.file) : null
       if (!survivor || !survivorGame || survivorGame.id === stale.id) continue
+      if (!(await ensureMergeBackup())) return finish()
       mergeGames(db, survivorGame.id, stale.id)
       removed += 1
     }
@@ -701,15 +774,7 @@ export async function scanRomFolders(
     pending = []
   }
 
-  emit({
-    phase: 'done',
-    kind: 'rom',
-    scanned,
-    found: added,
-    message: `ROM scan complete — ${added} added, ${skipped} skipped (duplicate formats and sidecar files kept out)${removed > 0 ? `, ${removed} stale sidecar${removed === 1 ? '' : 's'} folded into surviving games` : ''}${missing > 0 ? `, ${missing} ROM${missing === 1 ? '' : 's'} missing from disk` : ''}${restored > 0 ? `, ${restored} back on disk` : ''}`,
-    errors
-  })
-  return { kind: 'rom', added, updated, skipped, removed, missing, errors, elapsedMs: Date.now() - started }
+  return finish()
 }
 
 /** Best-effort enrichment of ROM metadata from the filename. */

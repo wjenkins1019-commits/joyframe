@@ -231,7 +231,21 @@ export function createHandlers(ctx: AppContext) {
     'scan:pc': async (paths: string[]): Promise<ScanResult> => scanPcFolders(ctx.db, paths, emitProgress),
     'scan:rom': async (paths: string[]): Promise<ScanResult> => {
       const settings = getSettings(ctx.db)
-      return scanRomFolders(ctx.db, paths, emitProgress, undefined, settings.romFormatPreferences)
+      let snapshotTaken = false
+      return scanRomFolders(ctx.db, paths, emitProgress, undefined, settings.romFormatPreferences, {
+        // The first rescan that would permanently fold entries takes a backup
+        // first, so a mis-grouped multi-disc set can be restored.
+        beforeFirstMerge: async () => {
+          if (snapshotTaken) return
+          snapshotTaken = true
+          await createBackup(
+            ctx.db,
+            path.join(path.dirname(ctx.info.databasePath), 'backups'),
+            settings.backupKeep,
+            'pre-merge'
+          )
+        }
+      })
     },
 
     'steam:detect': async (): Promise<SteamDetection> => {

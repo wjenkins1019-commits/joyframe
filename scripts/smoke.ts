@@ -291,6 +291,80 @@ await check('a different disc launches its own file', () => {
   assert.equal(command.args.includes(game.romPath), false)
 })
 
+await check('a missing default disc falls back to one still on disk', async () => {
+  const game = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  const disc1 = game.launchMethods.find((method) => method.label === 'Disc 1')
+  const disc2 = game.launchMethods.find((method) => method.label === 'Disc 2')
+  assert.ok(disc1 && disc2)
+  assert.equal(disc1.isDefault, true)
+  fs.rmSync(disc1.target)
+  try {
+    // Launching uses Disc 2 and says so, instead of failing on the dead path.
+    const command = buildLaunchCommand(db, game)
+    assert.ok(command.args.includes(disc2.target))
+    assert.equal(command.args.includes(disc1.target), false)
+    assert.equal(command.description, 'Disc 2 (default disc missing)')
+
+    // The same fallback applies when the default is an emulator choice
+    // rather than a disc row: the dead game ROM is replaced by a live disc.
+    const emulatorDefault = {
+      ...game,
+      launchMethods: game.launchMethods
+        .map((method) => ({ ...method, isDefault: false }))
+        .concat([
+          {
+            id: 'method-emulator-default',
+            gameId: game.id,
+            label: 'Preferred emulator',
+            kind: 'emulator' as const,
+            target: '',
+            args: '',
+            emulatorId: game.emulatorId,
+            core: '',
+            isDefault: true
+          }
+        ])
+    }
+    const viaEmulator = buildLaunchCommand(db, emulatorDefault)
+    assert.ok(viaEmulator.args.includes(disc2.target))
+    assert.equal(viaEmulator.args.includes(disc1.target), false)
+    assert.equal(viaEmulator.description, 'Emulator (default disc missing)')
+
+    // The set is still on disk, so a rescan neither marks it missing nor
+    // splits the remaining disc into a second card.
+    const before = queryGames(db, { source: 'rom-scan' }, true).length
+    const result = await scanRomFolders(db, [romRoot], emit)
+    assert.equal(result.missing, 0)
+    assert.equal(result.added, 0)
+    assert.equal(queryGames(db, { source: 'rom-scan' }, true).length, before)
+    const after = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+    assert.equal(after.extra.missingRom, undefined)
+    assert.equal(after.installed, true)
+    // The disc list is untouched, so the deleted disc still has its slot.
+    assert.equal(after.launchMethods.filter((method) => method.kind === 'rom').length, 2)
+  } finally {
+    write(disc1.target, 'cue', 256)
+  }
+  // With every disc back the default disc launches again.
+  const restored = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  assert.ok(buildLaunchCommand(db, restored).args.includes(disc1.target))
+
+  // Consistency: when *no* disc is left the set counts as missing like any
+  // other game, and it heals when the discs come back.
+  fs.rmSync(disc1.target)
+  fs.rmSync(disc2.target)
+  const gone = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(gone.missing, 1)
+  assert.equal(queryGames(db, { search: 'Final Fantasy IX' }, true)[0].extra.missingRom, true)
+  write(disc1.target, 'cue', 256)
+  write(disc2.target, 'cue', 256)
+  const healed = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(healed.missing, 0)
+  const back = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  assert.equal(back.extra.missingRom, false)
+  assert.equal(back.installed, true)
+})
+
 await check('a library scanned per disc migrates into one entry on rescan', async () => {
   const grouped = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
   const disc1 = path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 1).cue')
@@ -317,7 +391,13 @@ await check('a library scanned per disc migrates into one entry on rescan', asyn
     installDir: path.dirname(disc2),
     playtimeSeconds: 300
   })
-  const result = await scanRomFolders(db, [romRoot], emit)
+  let backups = 0
+  const result = await scanRomFolders(db, [romRoot], emit, undefined, {}, {
+    beforeFirstMerge: () => {
+      backups += 1
+    }
+  })
+  assert.equal(backups, 1, 'the scan snapshots the library once before the first permanent fold')
   assert.equal(result.added, 0)
   const merged = queryGames(db, { search: 'Final Fantasy IX' }, true)
   assert.equal(merged.length, 1)
@@ -328,6 +408,47 @@ await check('a library scanned per disc migrates into one entry on rescan', asyn
   assert.equal(merged[0].notes, 'legacy note')
   assert.equal(merged[0].launchMethods.filter((method) => method.kind === 'rom').length, 2)
   assert.equal(queryGames(db, {}, true).filter((game) => game.id === legacy2.id).length, 0)
+})
+
+await check('a rescan that cannot back up stops before merging anything', async () => {
+  const merged = queryGames(db, { search: 'Final Fantasy IX' }, true)[0]
+  const disc1 = path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 1).cue')
+  const disc2 = path.join(romRoot, 'ps1', 'Final Fantasy IX', 'Final Fantasy IX (Disc 2).cue')
+  // Rebuild the per-disc shape again, then refuse the pre-merge snapshot.
+  deleteGame(db, merged.id)
+  const legacy1 = insertGame(db, {
+    title: 'Final Fantasy IX (Disc 1)',
+    platformId: 'ps1',
+    source: 'rom-scan',
+    sourceId: disc1,
+    romPath: disc1,
+    installDir: path.dirname(disc1),
+    playtimeSeconds: 600
+  })
+  const legacy2 = insertGame(db, {
+    title: 'Final Fantasy IX (Disc 2)',
+    platformId: 'ps1',
+    source: 'rom-scan',
+    sourceId: disc2,
+    romPath: disc2,
+    installDir: path.dirname(disc2),
+    playtimeSeconds: 300
+  })
+  const result = await scanRomFolders(db, [romRoot], emit, undefined, {}, {
+    beforeFirstMerge: () => {
+      throw new Error('disk full')
+    }
+  })
+  assert.ok(result.errors.some((error) => /backup failed/i.test(error)))
+  // Nothing was folded: both cards survive with their own history.
+  const survivors = queryGames(db, { search: 'Final Fantasy IX' }, true)
+  assert.equal(survivors.length, 2)
+  assert.ok(survivors.some((game) => game.id === legacy1.id && game.playtimeSeconds === 600))
+  assert.ok(survivors.some((game) => game.id === legacy2.id && game.playtimeSeconds === 300))
+  // A healthy scan afterwards still merges, leaving the library as found.
+  const healed = await scanRomFolders(db, [romRoot], emit)
+  assert.equal(healed.errors.length, 0)
+  assert.equal(queryGames(db, { search: 'Final Fantasy IX' }, true).length, 1)
 })
 
 await check('ROMs are auto-mapped to a compatible emulator and core', () => {

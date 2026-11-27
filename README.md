@@ -129,6 +129,8 @@ npm run smoke
   one, otherwise the largest file. A multi-disc set (`(Disc 1)`, `(Disc 2)` … in the same folder) is one library
   entry with a launch method per disc, so cover, playtime and metadata are shared; re-scanning a library that was
   imported one-card-per-disc folds the discs into the first entry instead of duplicating it.
+  Before the first such fold, the scan saves a `pre-merge` database backup, so a mis-grouped set can be restored
+  from Settings → Data, backups & recovery; if the backup itself fails the scan stops before changing anything.
   Rescanning folds stale sidecar entries from older scans into the surviving game, keeping playtime and metadata.
   A ROM that is no longer on disk is marked **ROM missing** (never deleted — playtime, metadata and notes stay) and its
   launch is refused with the path, while a file that returns clears the mark on the next scan.

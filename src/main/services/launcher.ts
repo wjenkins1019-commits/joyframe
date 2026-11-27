@@ -130,6 +130,17 @@ function resolveEmulator(
   }
 }
 
+/**
+ * The disc to run: the requested file when it is on disk, otherwise any other
+ * disc of the same game that is. A deleted default disc should not block a
+ * multi-disc game whose other discs are still there.
+ */
+function playableDisc(game: Game, preferred: string): { path: string; label: string } | null {
+  if (preferred && fs.existsSync(preferred)) return { path: preferred, label: '' }
+  const disc = game.launchMethods.find((m) => m.kind === 'rom' && m.target && fs.existsSync(m.target))
+  return disc ? { path: disc.target, label: disc.label } : null
+}
+
 export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): ResolvedLaunch {
   const defaultMethod = game.launchMethods.find((m) => m.isDefault)
 
@@ -158,7 +169,12 @@ export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): 
     }
     if (defaultMethod.kind === 'emulator' || defaultMethod.kind === 'rom') {
       // A disc method launches the emulator with that disc instead of the
-      // game's first file, so multi-disc sets keep one card between discs.
+      // game's first file, so multi-disc sets keep one card between discs. A
+      // missing default disc falls back to one that is still on disk — for a
+      // rom method that is its own target, for an emulator method it is the
+      // game's ROM — and the launch message says so.
+      const wanted = defaultMethod.kind === 'rom' ? defaultMethod.target : game.romPath
+      const disc = wanted ? playableDisc(game, wanted) : null
       const run = resolveEmulator(
         db,
         game,
@@ -166,8 +182,11 @@ export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): 
         defaultMethod.core,
         defaultMethod.args,
         settings,
-        defaultMethod.kind === 'rom' ? defaultMethod.target : ''
+        disc ? disc.path : defaultMethod.kind === 'rom' ? defaultMethod.target : ''
       )
+      const fellBack = Boolean(disc && disc.path !== wanted)
+      const label =
+        defaultMethod.kind === 'rom' ? disc?.label || defaultMethod.label || 'Emulator' : 'Emulator'
       return {
         kind: 'spawn',
         target: run.exe,
@@ -175,7 +194,7 @@ export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): 
         cwd: run.cwd,
         source: 'emulator',
         watchDir: '',
-        description: defaultMethod.kind === 'rom' ? defaultMethod.label || 'Emulator' : 'Emulator'
+        description: fellBack ? `${label} (default disc missing)` : label
       }
     }
     if (!fs.existsSync(defaultMethod.target)) {
@@ -205,8 +224,28 @@ export function buildLaunchCommand(db: Db, game: Game, settings?: AppSettings): 
   }
 
   if (game.emulatorId || game.romPath) {
-    const run = resolveEmulator(db, game, game.emulatorId, game.emulatorCore, game.launchArgs, settings)
-    return { kind: 'spawn', target: run.exe, args: run.args, cwd: run.cwd, source: 'emulator', watchDir: '', description: 'Emulator' }
+    // Same fallback for a game whose discs are reachable only through methods.
+    const disc = game.romPath ? playableDisc(game, game.romPath) : null
+    const run = resolveEmulator(
+      db,
+      game,
+      game.emulatorId,
+      game.emulatorCore,
+      game.launchArgs,
+      settings,
+      disc ? disc.path : game.romPath
+    )
+    const fellBack = Boolean(disc && disc.path !== game.romPath)
+    const label = disc?.label || 'Emulator'
+    return {
+      kind: 'spawn',
+      target: run.exe,
+      args: run.args,
+      cwd: run.cwd,
+      source: 'emulator',
+      watchDir: '',
+      description: fellBack ? `${label} (default disc missing)` : label
+    }
   }
 
   if (game.executable) {
