@@ -262,6 +262,20 @@ if (mode === 'cdp-close-routine') {
   process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
 }
 
+if (mode === 'cdp-close-expected') {
+  // A probe that asks the app to quit (or to restart) is told the socket goes
+  // away mid-call: the close is requested even though the app performs it.
+  const endpoint = await wsEndpoint(() => {})
+  const session = await connect(endpoint.url)
+  const pendingCall = session.call('Runtime.evaluate', { expression: '1' }, 5000).catch((error) => error)
+  session.expectClose()
+  await endpoint.close()
+  const thrown = await pendingCall
+  const reason = thrown?.message ?? 'none'
+  console.log(`app closed as asked: ${reason}`)
+  process.exit(reason.startsWith('the app closed the DevTools connection') ? 0 : 1)
+}
+
 /** A loopback port nothing listens on, so discovery's polls all fail. */
 async function closedPort() {
   const server = net.createServer()

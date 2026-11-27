@@ -705,7 +705,7 @@ async function checkMultidiscLaunch({ label, evaluate, read, check, profile }) {
  * then proves the discs survive a default disc disappearing, and finally
  * restores that snapshot from the app's own restore path, which relaunches it.
  */
-async function checkMultidiscRecovery({ label, app, attach, evaluate, read, check, profile }) {
+async function checkMultidiscRecovery({ label, app, attach, evaluate, read, expectClose, check, profile }) {
   // Absolute throughout: the seed wrote absolute paths, and the scan is asked
   // for a root the app compares against them verbatim.
   const dir = path.resolve(profile)
@@ -992,6 +992,9 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
     // again — so the restored per-disc shape is what the second boot reads.
     for (const index of [0, 1]) fs.rmSync(disc(index), { force: true })
     const snapshot = path.join(backupDir, premerge[0])
+    // The restore restarts the app, so its socket goes away before this call
+    // is answered: that close is asked for, not a lost connection.
+    expectClose()
     const exited = new Promise((resolve) => app.once('exit', resolve))
     await Promise.race([
       evaluate(
@@ -1033,6 +1036,7 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, chec
   } finally {
     // A relaunched instance is not our child, so it is asked to quit itself.
     if (restored) {
+      restored.expectClose()
       await Promise.race([restored.evaluate('window.joyframe.system.quit()').catch(() => null), delay(4000)])
     }
   }
@@ -1106,6 +1110,7 @@ async function main() {
         label,
         app: first.app,
         attach,
+        expectClose: first.expectClose,
         evaluate: first.evaluate,
         read: first.read,
         readLayout,

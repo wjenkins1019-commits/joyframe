@@ -226,6 +226,17 @@ const CASES = [
     ]
   },
   {
+    // verify-dist asks the app to quit or restart, so the app closes the socket
+    // while that call is still waiting — expected, and not a warning.
+    mode: 'cdp-close-expected',
+    name: 'a close the probe asked the app to make stays off the run page',
+    exit: 0,
+    env: { GITHUB_ACTIONS: 'true' },
+    stdout: ['app closed as asked: the app closed the DevTools connection'],
+    stdoutAbsent: ['::warning'],
+    summaryAbsent: ['## guard-fixture', 'This notice does not fail the run.']
+  },
+  {
     mode: 'cdp-timeout',
     name: 'an unanswered command warns with its method and deadline',
     exit: 0,

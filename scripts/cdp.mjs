@@ -530,6 +530,14 @@ export async function connect(debuggerUrl) {
 
   return {
     events,
+    /**
+     * Say that the app is being asked to exit, so the close it causes while a
+     * command is still waiting is expected: a probe that calls `system.quit()`
+     * or a restore that restarts the app never gets a reply to that call.
+     */
+    expectClose: () => {
+      closing = true
+    },
     close: () => {
       closing = true
       socket.close()
@@ -602,7 +610,7 @@ export async function findWindow(port, { timeout = 20000, interval = 250, clock 
  * reload would spend a one-shot startup ident before it can be observed.
  */
 export async function createSession(target, { reload = true } = {}) {
-  const { call, close, events } = await connect(target.webSocketDebuggerUrl)
+  const { call, close, expectClose, events } = await connect(target.webSocketDebuggerUrl)
   await call('Runtime.enable')
   await call('Log.enable')
   await call('Page.enable')
@@ -624,7 +632,7 @@ export async function createSession(target, { reload = true } = {}) {
   const read = (expression, ready, timeout = 20000) =>
     waitForValue(evaluate, expression, { timeout, interval: 150, ready, throwOnExpire: true })
 
-  return { call, close, events, evaluate, read }
+  return { call, close, expectClose, events, evaluate, read }
 }
 
 /** Renderer console warnings, errors and exceptions captured during a boot. */
