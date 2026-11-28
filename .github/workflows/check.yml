@@ -40,10 +40,16 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch makes an in-flight run obsolete.
+# A newer push to a pull request makes that PR's in-flight run obsolete: only
+# its head commit matters. A push to main is different — every commit on main
+# can be tagged and released, and release.yml refuses to build without a green
+# check.yml run for that exact commit. Grouping main by ref and cancelling let a
+# second push end the first commit's run before its packaged suite finished,
+# leaving a commit that could never be released. Main (and workflow_dispatch)
+# runs are grouped per commit and never cancelled instead.
 concurrency:
-  group: check-${{ github.ref }}
-  cancel-in-progress: true
+  group: check-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   no-gui-checks:
@@ -66,6 +72,14 @@ jobs:
 
       - name: Typecheck main and renderer
         run: npm run typecheck
+
+      # The scanner's grouping rules — a PS3 dump's boot file, a multi-disc
+      # CUE/M3U set, an ambiguous extension's platform — were proven only by the
+      # smoke test and the packaged probes, minutes after the edit that broke
+      # them. This suite is pure rules against temp fixtures and runs in
+      # seconds, so it goes before both.
+      - name: Scanner grouping rules
+        run: npm run test:scanner
 
       - name: Prove the suite's guards still fail correctly
         run: npm run self-test

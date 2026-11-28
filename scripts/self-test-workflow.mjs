@@ -116,6 +116,8 @@ const DIST_PROFILES = EXPECTED_ARTIFACTS[3]
 const FIRST_RUN = EXPECTED_ARTIFACTS[4]
 
 const EXPECTED_CHECKS = [
+  'main pushes neither supersede nor cancel each other, pull requests still do',
+  'the scanner unit suite runs before smoke and the packaged probes',
   ...EXPECTED_ARTIFACTS.map((artifact) => artifact.label),
   'every failure upload is gated on failure() and attempt-suffixed',
   'every failure upload of a dot-directory opts into hidden files',
@@ -176,6 +178,35 @@ for (const [jobId, job] of Object.entries(workflow.jobs)) {
 
 const results = []
 const check = (name, ok, detail) => results.push({ name, ok, detail })
+
+// Cancelling a superseded run is right for a pull request and wrong for main: a
+// main commit whose run was cancelled can never pass release.yml's green-run
+// gate, so it can never be released. Pin both halves instead of trusting the
+// comment — `cancel-in-progress: true` with a per-ref group shipped once.
+const concurrency = workflow.concurrency ?? {}
+const concurrencyGroup = String(concurrency.group ?? '')
+const cancelInProgress = String(concurrency['cancel-in-progress'] ?? '')
+check(
+  'main pushes neither supersede nor cancel each other, pull requests still do',
+  concurrencyGroup.includes('github.sha') &&
+    concurrencyGroup.includes("github.event_name == 'pull_request'") &&
+    cancelInProgress.includes("github.event_name == 'pull_request'") &&
+    cancelInProgress !== 'true',
+  `group ${concurrencyGroup || '(unset)'}, cancel-in-progress ${cancelInProgress || '(unset)'}`
+)
+
+// The scanner's grouping rules are the fastest failure surface in the suite, so
+// the unit test has to run before the smoke test — and the packaged probes,
+// which the installer job only starts once this job is green. Pin the order:
+// moving the step below smoke, or out of the job, would pass silently.
+const checkJobSteps = workflow.jobs['no-gui-checks']?.steps ?? []
+const unitIndex = checkJobSteps.findIndex((step) => runText(step) === 'npm run test:scanner')
+const smokeIndex = checkJobSteps.findIndex((step) => runText(step) === 'npm run smoke')
+check(
+  'the scanner unit suite runs before smoke and the packaged probes',
+  unitIndex >= 0 && smokeIndex > unitIndex,
+  unitIndex >= 0 ? `unit step ${unitIndex}, smoke step ${smokeIndex}` : 'npm run test:scanner is missing from no-gui-checks'
+)
 
 /** Each expected upload must exist once, in its job, with its paths and flag. */
 for (const expected of EXPECTED_ARTIFACTS) {
