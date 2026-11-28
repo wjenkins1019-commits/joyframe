@@ -5,6 +5,7 @@ import type { Db } from './db.ts'
 import { defaultRomOrder } from '../../shared/rom-formats.ts'
 import { detectPlatform, platformById } from './platforms.ts'
 import {
+  deleteGame,
   findBySource,
   findDuplicate,
   getGame,
@@ -343,6 +344,31 @@ function isRomFile(file: string): boolean {
   return true
 }
 
+/**
+ * A PS3 disc dump keeps the game in `PS3_GAME/USRDIR/EBOOT.BIN`; everything
+ * else in the tree (LICDIR, PKGDIR, TROPDIR, PS3_EXTRA, PS3_CONTENT) is system
+ * data, and USRDIR holds hundreds of `.bin` pack files that are not games.
+ */
+const PS3_DISC_DIRS = new Set(['ps3_game', 'ps3_content', 'ps3_extra', 'ps3_update'])
+
+/** The disc-dump folder above a PS3 system path, or null when the file is not in one. */
+function ps3DiscRoot(file: string): string | null {
+  const parts = file.split(/[\\/]/)
+  for (let index = parts.length - 2; index > 0; index -= 1) {
+    if (PS3_DISC_DIRS.has(parts[index].toLowerCase())) return parts.slice(0, index).join(path.sep)
+  }
+  return null
+}
+
+/** The one file in a PS3 disc dump that is the game itself. */
+function isPs3BootFile(file: string): boolean {
+  const parts = file.split(/[\\/]/)
+  return (
+    parts[parts.length - 1]?.toLowerCase() === 'eboot.bin' &&
+    parts[parts.length - 2]?.toLowerCase() === 'usrdir'
+  )
+}
+
 interface ScanItem {
   file: string
   platformId: string
@@ -523,6 +549,16 @@ export async function scanRomFolders(
       6,
       (entry) => {
         scanned += 1
+        // A PS3 disc dump is one game: its boot file. The licence, logo, package
+        // and pack files beside it would otherwise import as separate cards.
+        const ps3Root = ps3DiscRoot(entry.file)
+        if (ps3Root) {
+          if (!isPs3BootFile(entry.file)) return
+          const title = cleanTitle(path.basename(ps3Root))
+          if (!title || title.length < 2) return
+          pending.push({ file: entry.file, platformId: 'ps3', title, size: entry.size })
+          return
+        }
         if (!isRomFile(entry.file)) return
         const lower = entry.file.toLowerCase()
         if (lower.includes('.uninstall') || lower.includes('bios') || lower.includes('firmware')) return
@@ -671,6 +707,11 @@ export async function scanRomFolders(
           if (!(await ensureMergeBackup())) return finish()
           survivor = mergeGames(db, survivor.id, duplicate.id)
         }
+        // A PS3 disc dump card an older scan made from its boot file was named
+        // after that file; the dump's folder carries the game's real name.
+        if (survivor.platformId === 'ps3' && /^eboot$/i.test(survivor.title)) {
+          survivor = updateGameRecord(db, survivor.id, { title: titleCase(unit.title) })
+        }
         if (unit.files.length > 1) {
           syncDiscMethods(db, survivor, unit.files, emulator)
           // An entry carried over from a per-disc scan still says "(Disc 1)";
@@ -721,6 +762,26 @@ export async function scanRomFolders(
       if (!staleFile || winnerFiles.has(staleFile)) continue
       const staleDir = path.dirname(staleFile)
       if (!staleFile.startsWith(rootPrefix) && !stale.installDir.toLowerCase().startsWith(rootPrefix)) continue
+      // Entries an older scan made from a PS3 disc dump's system files fold into
+      // the dump's game so a rescan leaves one card per game, not twenty-five.
+      const staleDiscRoot = ps3DiscRoot(staleFile)
+      if (staleDiscRoot) {
+        if (isPs3BootFile(staleFile)) continue
+        const boot = pending.find(
+          (item) => ps3DiscRoot(item.file)?.toLowerCase() === staleDiscRoot.toLowerCase()
+        )
+        const survivorGame = boot ? findBySource(db, 'rom-scan', boot.file) : null
+        if (!survivorGame) {
+          deleteGame(db, stale.id)
+          removed += 1
+          continue
+        }
+        if (survivorGame.id === stale.id) continue
+        if (!(await ensureMergeBackup())) return finish()
+        mergeGames(db, survivorGame.id, stale.id)
+        removed += 1
+        continue
+      }
       const folderKey = variantKey(path.basename(staleDir))
       if (!relatesToFolder(stale.title, folderKey)) continue
       const survivor = pending.find(

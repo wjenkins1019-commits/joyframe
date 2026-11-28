@@ -239,6 +239,58 @@ await check('per-platform format preference replaces the default order', () => {
 })
 prefDb.close()
 
+// A PS3 disc dump: one game in PS3_GAME/USRDIR, wrapped in licence, logo,
+// package and pack files that must never become library entries.
+const ps3Root = path.join(root, 'roms-ps3')
+const ps3Disc = path.join(ps3Root, 'Disk Games', 'God of War Collection (USA) (v02.00)')
+write(path.join(ps3Disc, 'PS3_DISC.SFB'), 'sfb', 128)
+write(path.join(ps3Disc, 'PS3_GAME', 'PARAM.SFO'), 'sfo', 128)
+write(path.join(ps3Disc, 'PS3_GAME', 'PS3LOGO.DAT'), 'logo', 512)
+write(path.join(ps3Disc, 'PS3_GAME', 'LICDIR', 'LIC.DAT'), 'lic', 256)
+write(path.join(ps3Disc, 'PS3_GAME', 'PKGDIR', 'PKG00', 'INSTALL.PKG'), 'pkg', 1024)
+write(path.join(ps3Disc, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN'), 'boot', 8192)
+write(path.join(ps3Disc, 'PS3_GAME', 'USRDIR', 'data', 'level.bin'), 'pack', 1024)
+write(path.join(ps3Disc, 'PS3_EXTRA', 'D000', 'DATA000.PKG'), 'pkg', 1024)
+
+const ps3Db = openDatabase(path.join(root, 'ps3.db'))
+// An older scan made a card out of the licence file; rescanning must fold it
+// into the game instead of leaving a lone LIC entry behind.
+const legacyLic = path.join(ps3Disc, 'PS3_GAME', 'LICDIR', 'LIC.DAT')
+insertGame(ps3Db, {
+  title: 'LIC',
+  platformId: 'ps3',
+  source: 'rom-scan',
+  sourceId: legacyLic,
+  romPath: legacyLic,
+  installDir: path.dirname(legacyLic),
+  playtimeSeconds: 120
+})
+const legacyBoot = path.join(ps3Disc, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN')
+insertGame(ps3Db, {
+  title: 'EBOOT',
+  platformId: 'ps3',
+  source: 'rom-scan',
+  sourceId: legacyBoot,
+  romPath: legacyBoot,
+  installDir: path.dirname(legacyBoot),
+  playtimeSeconds: 60
+})
+await scanRomFolders(ps3Db, [ps3Root], emit)
+
+await check('PS3 disc dumps import one game, never their system files', () => {
+  const games = queryGames(ps3Db, { source: 'rom-scan' }, true)
+  assert.equal(games.length, 1, `unexpected PS3 entries: ${games.map((game) => game.title).join(', ')}`)
+  const [game] = games
+  assert.equal(game.title, 'God of War Collection')
+  assert.equal(game.platformId, 'ps3')
+  assert.ok(game.romPath.toLowerCase().endsWith(`${path.sep}usrdir${path.sep}eboot.bin`))
+  // The boot card was renamed after its folder and the licence card's
+  // playtime survived the fold.
+  assert.equal(game.playtimeSeconds, 180)
+  assert.equal(games.filter((entry) => /^(eboot|lic|ps3logo|data0|install)/i.test(entry.title)).length, 0)
+})
+ps3Db.close()
+
 await check('multi-format games import once, in the preferred format', () => {
   const romGames = queryGames(db, { source: 'rom-scan' }, true)
   const metroid = romGames.filter((game) => game.title === 'Metroid Dread')
