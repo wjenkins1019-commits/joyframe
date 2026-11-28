@@ -107,7 +107,7 @@ async function walk(
 }
 
 const TITLE_EXTENSIONS =
-  /\.(exe|iso|bin|cue|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|jag|rom|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso|nsp|nsz|xci|wud|wux|rpx|gcz|wad|cci|pkg|dat|dosz|gz|dec)$/i
+  /\.(exe|iso|bin|cue|m3u|chd|zip|7z|nes|sfc|smc|n64|z64|gba|gbc|gb|nds|3ds|cia|rvz|gcm|wbfs|gdi|cdi|md|gen|smd|sms|gg|pce|a26|a78|j64|jag|rom|d64|t64|prg|tap|vpk|cso|pbp|xex|xiso|nsp|nsz|xci|wud|wux|rpx|gcz|wad|cci|pkg|dat|dosz|gz|dec)$/i
 
 export function cleanTitle(raw: string): string {
   // Loop, so a compound name like `Foo.iso.gz` loses every stacked extension
@@ -352,7 +352,7 @@ function isRomFile(file: string): boolean {
 const PS3_DISC_DIRS = new Set(['ps3_game', 'ps3_content', 'ps3_extra', 'ps3_update'])
 
 /** The disc-dump folder above a PS3 system path, or null when the file is not in one. */
-function ps3DiscRoot(file: string): string | null {
+export function ps3DiscRoot(file: string): string | null {
   const parts = file.split(/[\\/]/)
   for (let index = parts.length - 2; index > 0; index -= 1) {
     if (PS3_DISC_DIRS.has(parts[index].toLowerCase())) return parts.slice(0, index).join(path.sep)
@@ -361,7 +361,7 @@ function ps3DiscRoot(file: string): string | null {
 }
 
 /** The one file in a PS3 disc dump that is the game itself. */
-function isPs3BootFile(file: string): boolean {
+export function isPs3BootFile(file: string): boolean {
   const parts = file.split(/[\\/]/)
   return (
     parts[parts.length - 1]?.toLowerCase() === 'eboot.bin' &&
@@ -647,6 +647,17 @@ export async function scanRomFolders(
       // unrelated game sharing the folder still imports on its own.
       const related = items.filter((item) => relatesToFolder(item.title, folderKey))
       const unrelated = items.filter((item) => !relatesToFolder(item.title, folderKey))
+      // A playlist that lists this folder's discs already covers every disc, so
+      // the per-disc sheets beside it are that same game a second time. Keep the
+      // playlist and drop them; otherwise the folder imported as a playlist card
+      // next to a multi-disc card, both carrying the folder's title.
+      const playlist = related
+        .filter((item) => path.extname(item.file).slice(1).toLowerCase() === 'm3u')
+        .sort((left, right) => right.size - left.size)[0]
+      if (playlist) {
+        folderSkipped += related.length - 1
+        return [playlist, ...unrelated]
+      }
       const winners = new Map<string, (typeof items)[number]>()
       for (const item of related) {
         const group = discGroup(item.title)
@@ -784,13 +795,18 @@ export async function scanRomFolders(
       }
       const folderKey = variantKey(path.basename(staleDir))
       if (!relatesToFolder(stale.title, folderKey)) continue
-      const survivor = pending.find(
+      const inFolder = pending.filter(
         (item) =>
           path.dirname(item.file).toLowerCase() === staleDir.toLowerCase() &&
           item.platformId === stale.platformId &&
-          variantKey(item.title) === folderKey &&
-          discGroup(item.title) === discGroup(stale.title)
+          variantKey(item.title) === folderKey
       )
+      const survivor =
+        inFolder.find((item) => discGroup(item.title) === discGroup(stale.title)) ??
+        // A folder the scan now represents by a playlist covers every disc, so a
+        // card an older scan made from one of those sheets folds into it rather
+        // than staying beside it as a duplicate of the same game.
+        inFolder.find((item) => path.extname(item.file).slice(1).toLowerCase() === 'm3u')
       const survivorGame = survivor ? findBySource(db, 'rom-scan', survivor.file) : null
       if (!survivor || !survivorGame || survivorGame.id === stale.id) continue
       if (!(await ensureMergeBackup())) return finish()
