@@ -15,6 +15,9 @@
  *  - multidisc recovery: a profile still in the old per-disc shape, proving the
  *           fold snapshots the library first, a default disc that disappears
  *           falls back to one on disk, and that snapshot restores from the app.
+ *  - ps3 dump: a disc dump the packaged scan must import as one game, and a dump
+ *           an older scan split into boot-file and licence-file cards that the
+ *           rescan must fold back into the folder's game.
  *
  * Finish `npm run dist` first, then run:
  *
@@ -114,6 +117,14 @@ const PROFILE_CHECKS = {
     'the restored snapshot brings back one entry per disc',
     'restore keeps a copy of the replaced library'
   ],
+  'ps3 dump': [
+    'the probe starts as a boot-file card and a system-file card',
+    'the packaged scan imports the fresh dump as one game',
+    'the fresh dump imports as one card named after its folder',
+    'the older boot-file card folds into the folder game',
+    'the older system-file card folds too and no system file is a card',
+    'library shows one card per dump'
+  ],
   'keys restore': [
     'the seeded provider key reads before any backup',
     'a backup with the key toggle writes a key companion',
@@ -158,6 +169,15 @@ const MULTI_RECORD = 'stub-args.json'
 const RECOVERY_TITLE = 'Multidisc Recovery Probe'
 const RECOVERY_DISCS = [1, 2].map((disc) => path.join('roms', 'ps1', `${RECOVERY_TITLE} (Disc ${disc}).cue`))
 const RECOVERY_RECORD = 'stub-args.json'
+
+/**
+ * The PS3 profile's two disc dumps: one the packaged scan imports from nothing,
+ * and one an older scan already turned into boot-file and licence-file cards.
+ */
+const PS3_FRESH = { title: 'God of War Collection', folder: 'God of War Collection (USA) (v02.00)' }
+const PS3_FOLDED = { title: 'Uncharted 2', folder: 'Uncharted 2 (USA)' }
+/** Titles an older scan gave a dump's system files; none may survive a rescan. */
+const PS3_SYSTEM_CARD = /^(eboot|lic|param|ps3logo|ps3_disc|install|data\d)/i
 
 /** A second game in the same profile: one live disc method, deliberately no default. */
 const ORPHAN_TITLE = 'Orphan Disc Probe'
@@ -1059,6 +1079,92 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, expe
 }
 
 /**
+ * A PS3 disc dump is one game, not one card per file in the tree. This profile
+ * holds two dumps: a fresh one the packaged scan has to import as one game, and
+ * one an older scan already split into a boot-file card and a licence-file card,
+ * which the rescan has to fold into the folder's game without losing playtime.
+ */
+async function checkPs3Dump({ label, evaluate, read, check, profile }) {
+  const roms = path.join(path.resolve(profile), 'roms')
+  const bootFile = (folder) => path.join(roms, 'Disk Games', folder, 'PS3_GAME', 'USRDIR', 'EBOOT.BIN')
+  const isBoot = (game) =>
+    (game.romPath ?? '').toLowerCase().endsWith(`${path.sep}usrdir${path.sep}eboot.bin`)
+  const listGames = `window.joyframe.library.list({}).then((games) =>
+    games.map((game) => ({
+      title: game.title,
+      platformId: game.platformId,
+      romPath: game.romPath,
+      playtimeSeconds: game.playtimeSeconds
+    }))
+  )`
+  const titled = (games, title) => (Array.isArray(games) ? games.filter((game) => game.title === title) : [])
+
+  const legacy = await evaluate(listGames)
+  check(
+    `${label}: the probe starts as a boot-file card and a system-file card`,
+    (legacy?.length ?? 0) === 2 && titled(legacy, 'EBOOT').length === 1 && titled(legacy, 'LIC').length === 1,
+    Array.isArray(legacy) ? legacy.map((game) => game.title).join(' | ') : 'library API unavailable'
+  )
+
+  const scanned = await evaluate(`window.joyframe.scans.romFolders([${JSON.stringify(roms)}])`)
+  check(
+    `${label}: the packaged scan imports the fresh dump as one game`,
+    scanned?.added === 1 && (scanned?.errors?.length ?? 0) === 0,
+    `added=${scanned?.added} removed=${scanned?.removed} errors=${JSON.stringify(scanned?.errors)}`
+  )
+
+  const games = await evaluate(listGames)
+  const fresh = titled(games, PS3_FRESH.title)
+  check(
+    `${label}: the fresh dump imports as one card named after its folder`,
+    fresh.length === 1 &&
+      fresh[0].platformId === 'ps3' &&
+      isBoot(fresh[0]) &&
+      path.resolve(fresh[0].romPath) === path.resolve(bootFile(PS3_FRESH.folder)),
+    fresh.length === 1
+      ? `title=${fresh[0].title} platform=${fresh[0].platformId} rom=${fresh[0].romPath}`
+      : `${fresh.length} cards titled ${PS3_FRESH.title}`
+  )
+
+  // The boot card was renamed after its folder and the licence card was merged
+  // into it, so the old card's 60s and the licence card's 120s both survive.
+  const folded = titled(games, PS3_FOLDED.title)
+  check(
+    `${label}: the older boot-file card folds into the folder game`,
+    folded.length === 1 &&
+      folded[0].platformId === 'ps3' &&
+      isBoot(folded[0]) &&
+      path.resolve(folded[0].romPath) === path.resolve(bootFile(PS3_FOLDED.folder)) &&
+      folded[0].playtimeSeconds === 180,
+    folded.length === 1
+      ? `title=${folded[0].title} playtime=${folded[0].playtimeSeconds}s rom=${folded[0].romPath}`
+      : `${folded.length} cards titled ${PS3_FOLDED.title}`
+  )
+
+  const systemCards = (games ?? []).filter((game) => PS3_SYSTEM_CARD.test(game.title))
+  check(
+    `${label}: the older system-file card folds too and no system file is a card`,
+    scanned?.removed === 1 &&
+      (games?.length ?? 0) === 2 &&
+      systemCards.length === 0 &&
+      titled(games, 'LIC').length === 0,
+    `removed=${scanned?.removed} games=${(games ?? []).length} system cards=${JSON.stringify(systemCards.map((game) => game.title))}`
+  )
+
+  await read(`Boolean(document.querySelector('button[aria-label="Library"]'))`, Boolean)
+  await evaluate(`document.querySelector('button[aria-label="Library"]')?.click()`)
+  const library = await read(viewProbe, (value) => value.view === 'library' && value.cards.length > 0)
+  const cards = (library?.cards ?? []).filter((card) =>
+    [PS3_FRESH.title, PS3_FOLDED.title].some((title) => card.startsWith(title))
+  )
+  check(
+    `${label}: library shows one card per dump`,
+    library?.view === 'library' && (library?.cards?.length ?? 0) === 2 && cards.length === 2,
+    `view=${library?.view} cards=${library ? library.cards.join(' | ') : 'none'}`
+  )
+}
+
+/**
  * The provider-key round trip, through the packaged app's own backup toggle and
  * restore path. A KEYS backup is the only thing that can revive a stored key
  * after secrets.key changes, so the backup is made while the key still opens the
@@ -1333,6 +1439,12 @@ async function main() {
       profile: path.join(ROOT, 'multidisc-recovery'),
       seed: ['scripts/seed-multidisc.ts', '--legacy'],
       checks: checkMultidiscRecovery
+    })
+    await verifyProfile({
+      label: 'ps3 dump',
+      profile: path.join(ROOT, 'ps3-dump'),
+      seed: ['scripts/seed-ps3-dump.ts'],
+      checks: checkPs3Dump
     })
     await verifyProfile({
       label: 'keys restore',
