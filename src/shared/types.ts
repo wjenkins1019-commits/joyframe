@@ -228,6 +228,14 @@ export interface AppSettings {
   igdbClientSecret: string
   /** Free RAWG API key, used for non-Steam descriptions, genres and artwork. */
   rawgApiKey: string
+  /**
+   * Derived, never stored: a sealed secret row exists but this machine's
+   * secrets.key cannot open it — a profile restored or copied without that
+   * file. The key reads as empty, so Settings asks for it again instead of
+   * calling it unset.
+   */
+  rawgKeyUnreadable: boolean
+  igdbSecretUnreadable: boolean
   autoScanOnStartup: boolean
   metadataRefreshDays: number
   backupKeep: number
@@ -272,6 +280,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   igdbClientId: '',
   igdbClientSecret: '',
   rawgApiKey: '',
+  rawgKeyUnreadable: false,
+  igdbSecretUnreadable: false,
   autoScanOnStartup: false,
   metadataRefreshDays: 30,
   backupKeep: 10,
@@ -412,6 +422,8 @@ export interface BackupInfo {
   path: string
   sizeBytes: number
   createdAt: string
+  /** True when a companion `.key` file travels with the database. */
+  includesSecrets: boolean
 }
 
 export interface AppInfo {
@@ -577,7 +589,8 @@ export interface JoyframeApi {
     pickFile(filters?: { name: string; extensions: string[] }[]): Promise<string | null>
     revealPath(path: string): Promise<void>
     openExternal(url: string): Promise<void>
-    backup(): Promise<BackupInfo>
+    /** `includeSecrets` also writes the profile's secrets.key beside the backup. */
+    backup(options?: { includeSecrets?: boolean }): Promise<BackupInfo>
     backups(): Promise<BackupInfo[]>
     restore(path: string): Promise<boolean>
     quit(): Promise<void>

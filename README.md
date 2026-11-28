@@ -172,7 +172,10 @@ npm run smoke
 
 - SQLite (Node's built-in `node:sqlite`, no native compilation) with WAL and a migration-safe schema.
 - Automatic consistent startup backups through SQLite's backup API, manual backups and restore with a pre-restore
-  safety copy + relaunch.
+  safety copy + relaunch. A manual backup can opt in to carrying the profile's `secrets.key` (listed as `KEYS`), which
+  is what keeps RAWG/IGDB credentials readable when the backup is restored on another PC; automatic backups never
+  include it, and a backup without it restores the library only — Settings then shows any saved key as unreadable and
+  asks for it again.
 - Artwork is streamed from the provider by default (nothing stored) or cached on disk and served through the
   `jf-art://` protocol for offline browsing — switchable in Settings → Metadata & artwork.
 - All startup data loaded from SQLite; internet is only required for fresh metadata, trailers and remote artwork.
@@ -206,8 +209,10 @@ scripts/                gen-icons.mjs, smoke.ts
 Data lives in Electron's `userData` folder (`%APPDATA%/JOYFRAME` on Windows):
 
 - `joyframe.db` — library, collections, settings, sessions, saves index
+- `secrets.key` — 32-byte key that encrypts the provider credentials; it lives beside the database, never inside it
 - `artwork/` — cached covers, hero art, logos, screenshots
-- `backups/` — automatic and manual database backups
+- `backups/` — automatic and manual database backups; a manual backup made with keys included also writes a matching
+  `.db.key` file beside it
 - `logs/joyframe.log` — startup failures, renderer crashes and uncaught errors
 
 ---

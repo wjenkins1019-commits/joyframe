@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowDown,
@@ -59,8 +59,14 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
   const [newSectionCollection, setNewSectionCollection] = useState('')
   const [draft, setDraft] = useState<PublicSettings>(settings)
   const [rawgKeyDraft, setRawgKeyDraft] = useState('')
+  const [rawgChecking, setRawgChecking] = useState(false)
+  /** The last RAWG value RAWG refused, so blurring it again is not a retry. */
+  const rawgRejected = useRef('')
   const [igdbSecretDraft, setIgdbSecretDraft] = useState('')
+  const [igdbChecking, setIgdbChecking] = useState(false)
   const [backups, setBackups] = useState<BackupInfo[]>([])
+  /** Opt-in: also write secrets.key beside a manual backup so it travels. */
+  const [includeKeys, setIncludeKeys] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [libraryPaths, setLibraryPaths] = useState<{ path: string; kind: string }[]>([])
@@ -92,19 +98,59 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
     if (draft[key] !== settings[key]) void updateSettings({ [key]: draft[key] } as SettingsPatch)
   }
 
-  /** Secrets are write-only: send a new value, then forget it locally. */
-  const commitSecret = (key: 'rawgApiKey' | 'igdbClientSecret', value: string, reset: (next: string) => void): void => {
+  /** A RAWG key is write-only: send a new value, then forget it locally. */
+  const commitRawgKey = async (value: string, reset: (next: string) => void): Promise<void> => {
     const trimmed = value.trim()
+    // A rejected value stays in the field to be corrected. Blurring that exact
+    // text again is the same attempt, so skip it rather than spending another
+    // RAWG request and repeating the toast.
+    if (trimmed && trimmed === rawgRejected.current) return
     reset('')
-    if (trimmed) void updateSettings({ [key]: trimmed } as SettingsPatch)
+    if (!trimmed) return
+    // The main process checks the key before storing it, which can take a
+    // moment; show that instead of failing silently.
+    setRawgChecking(true)
+    const saved = await updateSettings({ rawgApiKey: trimmed })
+    setRawgChecking(false)
+    if (!saved) {
+      // Rejected (wrong key, or RAWG unreachable): keep the text so it can be
+      // corrected without retyping. The toast has already said why.
+      rawgRejected.current = trimmed
+      reset(value)
+      return
+    }
+    rawgRejected.current = ''
+  }
+
+  /**
+   * IGDB credentials are a pair, so both fields are submitted together: a new
+   * client ID and secret are checked as one credential. A refusal keeps both as
+   * typed so the pair can be corrected and saved again; nothing is stored.
+   */
+  const commitIgdb = async (): Promise<void> => {
+    const clientId = draft.igdbClientId.trim()
+    const secret = igdbSecretDraft.trim()
+    const idChanged = clientId !== settings.igdbClientId
+    if (!idChanged && !secret) return
+    const patch: SettingsPatch = {}
+    if (idChanged) patch.igdbClientId = clientId
+    if (secret) patch.igdbClientSecret = secret
+    setIgdbChecking(true)
+    const saved = await updateSettings(patch)
+    setIgdbChecking(false)
+    // An empty secret field means "no change"; clearing uses its own button.
+    if (saved && secret) setIgdbSecretDraft('')
   }
 
   const makeBackup = async (): Promise<void> => {
     setBusy('backup')
     try {
-      const backup = await api.system.backup()
+      const backup = await api.system.backup({ includeSecrets: includeKeys })
       await loadMaintenance()
-      notify(`Backup created (${Math.round(backup.sizeBytes / 1024)} KB)`, 'success')
+      notify(
+        `Backup created (${Math.round(backup.sizeBytes / 1024)} KB)${backup.includesSecrets ? ' with provider keys' : ''}`,
+        'success'
+      )
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {
@@ -544,16 +590,34 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               checked={draft.artworkStorage === 'cache'}
               onChange={(value) => commit({ artworkStorage: value ? 'cache' : 'remote' })}
             />
-            <Field label="RAWG API key">
+            <Field
+              label="RAWG API key"
+              hint={
+                rawgChecking
+                  ? 'Checking this key with RAWG…'
+                  : settings.rawgKeyUnreadable
+                    ? 'A key is saved, but this PC cannot decrypt it (secrets.key is not in this profile) — enter it again to replace it.'
+                    : undefined
+              }
+            >
               <Input
                 type="password"
                 value={rawgKeyDraft}
+                disabled={rawgChecking}
+                onFocus={() => {
+                  // Going back into the field is a fresh attempt: a check that
+                  // was rate-limited or could not reach RAWG can be retried
+                  // without editing the text first.
+                  rawgRejected.current = ''
+                }}
                 onChange={(event) => setRawgKeyDraft(event.target.value)}
-                onBlur={() => commitSecret('rawgApiKey', rawgKeyDraft, setRawgKeyDraft)}
+                onBlur={() => void commitRawgKey(rawgKeyDraft, setRawgKeyDraft)}
                 placeholder={
-                  settings.rawgKeyConfigured
-                    ? 'Key stored — enter a new key to replace it'
-                    : 'Free key from rawg.io/apidocs'
+                  settings.rawgKeyUnreadable
+                    ? 'Saved key unreadable here — enter it again'
+                    : settings.rawgKeyConfigured
+                      ? 'Key stored — enter a new key to replace it'
+                      : 'Free key from rawg.io/apidocs'
                 }
               />
             </Field>
@@ -561,19 +625,34 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               <Field label="IGDB client ID">
                 <Input
                   value={draft.igdbClientId}
+                  disabled={igdbChecking}
                   onChange={(event) => setDraft({ ...draft, igdbClientId: event.target.value })}
-                  onBlur={() => commitText('igdbClientId')}
+                  onBlur={() => void commitIgdb()}
                   placeholder="Twitch application client ID"
                 />
               </Field>
-              <Field label="IGDB client secret">
+              <Field
+                label="IGDB client secret"
+                hint={
+                  igdbChecking
+                    ? 'Checking these credentials with Twitch…'
+                    : settings.igdbSecretUnreadable
+                      ? 'A secret is saved, but this PC cannot decrypt it (secrets.key is not in this profile) — enter it again to replace it.'
+                      : undefined
+                }
+              >
                 <Input
                   type="password"
                   value={igdbSecretDraft}
+                  disabled={igdbChecking}
                   onChange={(event) => setIgdbSecretDraft(event.target.value)}
-                  onBlur={() => commitSecret('igdbClientSecret', igdbSecretDraft, setIgdbSecretDraft)}
+                  onBlur={() => void commitIgdb()}
                   placeholder={
-                    settings.igdbSecretConfigured ? 'Secret stored — enter a new one to replace it' : 'Stored locally'
+                    settings.igdbSecretUnreadable
+                      ? 'Saved secret unreadable here — enter it again'
+                      : settings.igdbSecretConfigured
+                        ? 'Secret stored — enter a new one to replace it'
+                        : 'Stored locally'
                   }
                 />
               </Field>
@@ -814,7 +893,15 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
             <p className="break-all">DB · {info.databasePath}</p>
             <p className="break-all">Art · {info.artworkDir}</p>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3">
+            <Toggle
+              label="Include saved provider keys"
+              description="Also writes this profile's secrets.key beside the backup, so restoring it on another PC keeps your RAWG and IGDB credentials working. Off by default: a backup without it can never reveal a stored key."
+              checked={includeKeys}
+              onChange={setIncludeKeys}
+            />
+          </div>
+          <div className="mt-1 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="secondary"
@@ -844,7 +931,6 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
               Refresh list
             </Button>
           </div>
-
           <div className="mt-4 max-h-52 space-y-1.5 overflow-y-auto pr-1">
             {backups.length === 0 && <p className="text-xs text-jf-muted">No backups yet. One is created automatically on startup.</p>}
             {backups.map((backup) => (
@@ -855,6 +941,7 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
                     {new Date(backup.createdAt).toLocaleString()} · {Math.round(backup.sizeBytes / 1024)} KB
                   </p>
                 </div>
+                {backup.includesSecrets && <Badge tone="dark">KEYS</Badge>}
                 {restoreTarget === backup.path ? (
                   <ConfirmInline
                     question="Replace current library?"
@@ -878,8 +965,13 @@ export function SettingsView({ onScan }: { onScan: () => void }): React.JSX.Elem
 
           <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[11px] text-amber-200/90">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Restoring replaces the current database with the selected backup and relaunches JOYFRAME. A safety copy is taken
-            automatically before the swap.
+            <span>
+              Restoring replaces the current database with the selected backup and relaunches JOYFRAME. A safety copy is
+              taken automatically before the swap. A backup marked <strong className="font-semibold">KEYS</strong> also
+              restores that profile's <code>secrets.key</code>, so your RAWG and IGDB credentials keep working on another
+              PC. A backup without it restores the library only — Settings then shows any saved key as unreadable and asks
+              you to enter it again.
+            </span>
           </div>
         </Section>
 

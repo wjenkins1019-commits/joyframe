@@ -9,6 +9,7 @@ import type {
 } from '../../shared/types.ts'
 import { cacheImage, copyLocalArtwork, artUrlFor } from './artwork.ts'
 import type { Db } from './db.ts'
+import { RAWG_API_BASE, rawgKeyAccepted, rawgKeyProbeUrl } from '../../shared/rawg.ts'
 import { getGame, nowIso, updateGameRecord } from './repo.ts'
 import { steamArtworkUrls } from './steam.ts'
 
@@ -390,8 +391,6 @@ async function enrichFromSteam(
 
 /* ------------------------------- RAWG ------------------------------- */
 
-const RAWG_BASE = 'https://api.rawg.io/api'
-
 export interface RawgGame {
   id: number
   slug?: string
@@ -412,12 +411,39 @@ async function rawgGet<T>(
   route: string,
   params: Record<string, string> = {}
 ): Promise<FetchOutcome<T>> {
-  const url = new URL(`${RAWG_BASE}${route}`)
+  const url = new URL(`${RAWG_API_BASE}${route}`)
   url.searchParams.set('key', deps.settings.rawgApiKey)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
   return fetchJson<T>(deps, 'rawg', url, {
     headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
   })
+}
+
+/**
+ * Confirm a key works before it is stored, so a wrong or truncated key is
+ * rejected in Settings instead of failing later during a refresh. Resolves to
+ * null when RAWG answered with games, or to a message explaining the failure.
+ * The key is only ever sent in the request URL, never logged or returned.
+ */
+export async function verifyRawgKey(deps: MetadataDeps, key: string): Promise<string | null> {
+  const outcome = await fetchJson<{ results?: unknown }>(deps, 'rawg', rawgKeyProbeUrl(key), {
+    headers: { 'User-Agent': 'JOYFRAME/1.0', Accept: 'application/json' }
+  })
+  if ('reason' in outcome) {
+    switch (outcome.reason) {
+      case 'auth':
+        return 'RAWG rejected this key — it is wrong, truncated or not a RAWG API key.'
+      case 'rate-limit':
+        return 'RAWG rate-limited the check — try again in a minute.'
+      case 'server':
+        return 'RAWG had a server error while checking the key — try again later.'
+      case 'no-match':
+        return 'RAWG did not accept this key.'
+      default:
+        return 'Could not reach RAWG to check the key — check your connection and try again.'
+    }
+  }
+  return rawgKeyAccepted(outcome.data) ? null : 'RAWG answered, but did not confirm the key — it was not saved.'
 }
 
 /**
@@ -541,18 +567,20 @@ async function enrichFromRawg(deps: MetadataDeps, game: Game): Promise<MetadataR
 
 const tokenCache = new Map<string, { token: string; expires: number }>()
 
-async function igdbToken(
-  deps: MetadataDeps
-): Promise<{ token: string } | { reason: MetadataFailureReason }> {
-  const { settings } = deps
-  const key = `${settings.igdbClientId}:${settings.igdbClientSecret}`
-  const cached = tokenCache.get(key)
-  if (cached && cached.expires > Date.now() + 60_000) return { token: cached.token }
+/**
+ * Twitch's client-credentials grant for one exact pair, shared by the refresh
+ * and the Settings check so both send the same request.
+ */
+async function requestIgdbToken(
+  deps: MetadataDeps,
+  clientId: string,
+  clientSecret: string
+): Promise<{ token: string; expiresIn: number } | { reason: MetadataFailureReason }> {
   const url = new URL('https://id.twitch.tv/oauth2/token')
-  url.searchParams.set('client_id', settings.igdbClientId)
-  url.searchParams.set('client_secret', settings.igdbClientSecret)
+  url.searchParams.set('client_id', clientId)
+  url.searchParams.set('client_secret', clientSecret)
   url.searchParams.set('grant_type', 'client_credentials')
-  const outcome = await fetchJson<{ access_token: string; expires_in: number }>(deps, 'igdb', url, {
+  const outcome = await fetchJson<{ access_token?: string; expires_in?: number }>(deps, 'igdb', url, {
     method: 'POST'
   })
   if ('reason' in outcome) {
@@ -568,11 +596,53 @@ async function igdbToken(
         : 'auth'
     return { reason }
   }
-  tokenCache.set(key, {
-    token: outcome.data.access_token,
-    expires: Date.now() + outcome.data.expires_in * 1000
-  })
-  return { token: outcome.data.access_token }
+  const token = outcome.data.access_token
+  if (!token) return { reason: 'no-match' }
+  return { token, expiresIn: Number(outcome.data.expires_in) || 0 }
+}
+
+async function igdbToken(
+  deps: MetadataDeps
+): Promise<{ token: string } | { reason: MetadataFailureReason }> {
+  const { settings } = deps
+  const key = `${settings.igdbClientId}:${settings.igdbClientSecret}`
+  const cached = tokenCache.get(key)
+  if (cached && cached.expires > Date.now() + 60_000) return { token: cached.token }
+  const result = await requestIgdbToken(deps, settings.igdbClientId, settings.igdbClientSecret)
+  if ('reason' in result) return { reason: result.reason }
+  tokenCache.set(key, { token: result.token, expires: Date.now() + result.expiresIn * 1000 })
+  return { token: result.token }
+}
+
+/**
+ * Confirm a Twitch client ID/secret pair before it is stored, so wrong IGDB
+ * credentials are rejected in Settings instead of failing at the next refresh.
+ * Resolves to null when Twitch issued a token, or to a message explaining the
+ * failure. The secret only ever travels in the request body, never logged or
+ * returned. Nothing is cached here: only a pair that is actually saved should
+ * own a token.
+ */
+export async function verifyIgdbCredentials(
+  deps: MetadataDeps,
+  clientId: string,
+  clientSecret: string
+): Promise<string | null> {
+  const result = await requestIgdbToken(deps, clientId, clientSecret)
+  if ('reason' in result) {
+    switch (result.reason) {
+      case 'auth':
+        return 'IGDB rejected these Twitch credentials — check the client ID and secret.'
+      case 'rate-limit':
+        return 'Twitch rate-limited the check — try again in a minute.'
+      case 'server':
+        return 'Twitch had a server error while checking the credentials — try again later.'
+      case 'no-match':
+        return 'Twitch answered, but did not confirm the credentials — they were not saved.'
+      default:
+        return 'Could not reach Twitch to check the credentials — check your connection and try again.'
+    }
+  }
+  return null
 }
 
 interface IgdbGame {

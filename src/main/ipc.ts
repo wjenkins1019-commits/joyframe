@@ -52,6 +52,7 @@ import { getPlatforms, getGame, insertGame, mergeGames, nowIso, queryGames, uid,
 import { markSavesScanned, listSaves, removeSaveRecord, scanSaves, saveSummary } from './services/saves.ts'
 import { scanPcFolders, scanRomFolders } from './services/scanner.ts'
 import { getMeta, getSettings, publicSettings, setMeta, updateSettings } from './services/settings.ts'
+import { applySettingsPatch } from './services/settings-guard.ts'
 import { detectSteam, importSteamGames, steamLaunchUrl } from './services/steam.ts'
 import { registerIpc } from './ipc-helpers.ts'
 
@@ -335,10 +336,16 @@ export function createHandlers(ctx: AppContext) {
     'saves:remove': (id: string) => removeSaveRecord(ctx.db, id),
 
     'settings:get': () => publicSettings(getSettings(ctx.db)),
-    'settings:update': (patch: SettingsPatch) => {
-      const next = updateSettings(ctx.db, patch)
-      ctx.setSettings(next)
-      return publicSettings(next)
+    'settings:update': async (patch: SettingsPatch) => {
+      // A new RAWG key is checked against the API before it is stored, so a
+      // wrong key fails here with a message instead of flipping the
+      // "configured" flag and only breaking on the next metadata refresh.
+      // The guard writes nothing on a refusal and its message never contains
+      // the key.
+      const result = await applySettingsPatch(ctx.db, metadataDeps(), patch)
+      if (!result.ok) throw new Error(result.problem)
+      ctx.setSettings(result.settings)
+      return publicSettings(result.settings)
     },
 
     'stats:get': () => getStats(ctx.db),
@@ -371,10 +378,28 @@ export function createHandlers(ctx: AppContext) {
       if (!/^(https?:|steam:|mailto:)/i.test(url)) throw new Error('Only web, Steam and mail links can be opened')
       await shell.openExternal(url)
     },
-    'system:backup': () => createBackup(ctx.db, path.join(path.dirname(ctx.info.databasePath), 'backups'), 10, 'manual'),
+    'system:backup': (options?: { includeSecrets?: boolean }) =>
+      createBackup(ctx.db, path.join(path.dirname(ctx.info.databasePath), 'backups'), 10, 'manual', {
+        // Opt-in only: the key is what makes the sealed rows readable, so it
+        // travels only when the user asks for a portable backup.
+        secretsPath: options?.includeSecrets ? path.join(ctx.info.userDataPath, 'secrets.key') : undefined
+      }),
     'system:backups': () => listBackups(path.join(path.dirname(ctx.info.databasePath), 'backups')),
     'system:restore': async (target: string) => {
-      restoreBackup(ctx.db, ctx.info.databasePath, target)
+      try {
+        restoreBackup(ctx.db, ctx.info.databasePath, target, path.join(ctx.info.userDataPath, 'secrets.key'))
+      } catch (error) {
+        // A restore that failed after the swap began has already closed the
+        // database and rolled the files back; the app needs a fresh start to
+        // open the restored copy instead of running without a connection.
+        if (!ctx.db.isOpen) {
+          setTimeout(() => {
+            app.relaunch()
+            app.exit(0)
+          }, 400)
+        }
+        throw error
+      }
       setTimeout(() => {
         app.relaunch()
         app.exit(0)

@@ -75,7 +75,8 @@ interface JoyframeState {
   setCompletion: (gameId: string, status: CompletionStatus) => Promise<void>
   addPlaytime: (gameId: string, seconds: number) => Promise<void>
   removeGame: (gameId: string) => Promise<void>
-  updateSettings: (patch: SettingsPatch) => Promise<void>
+  /** Resolves true when the patch was saved, false when it was rejected. */
+  updateSettings: (patch: SettingsPatch) => Promise<boolean>
   refreshSections: (sections: HomeSection[]) => Promise<void>
 }
 
@@ -392,8 +393,10 @@ export const useStore = create<JoyframeState>((set, get) => ({
       const settings = await api.settings.update(patch)
       set({ settings })
       void get().refresh()
+      return true
     } catch (error) {
       get().notify(errorMessage(error), 'error')
+      return false
     }
   },
 

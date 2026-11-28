@@ -1,12 +1,18 @@
 import { DEFAULT_SETTINGS } from '../../shared/types.ts'
 import type { AppSettings, PublicSettings } from '../../shared/types.ts'
 import type { Db } from './db.ts'
-import { isSealed, openSecret, sealSecret } from './secrets.ts'
+import { isSealed, readSecret, sealSecret } from './secrets.ts'
 
 export { DEFAULT_SETTINGS }
 
 const SECRET_KEYS = ['rawgApiKey', 'igdbClientSecret'] as const
 type SecretKey = (typeof SECRET_KEYS)[number]
+
+/** The derived flag that marks a secret row this machine cannot decrypt. */
+const UNREADABLE_FLAG: Record<SecretKey, 'rawgKeyUnreadable' | 'igdbSecretUnreadable'> = {
+  rawgApiKey: 'rawgKeyUnreadable',
+  igdbClientSecret: 'igdbSecretUnreadable'
+}
 
 function isSecretKey(key: string): key is SecretKey {
   return (SECRET_KEYS as readonly string[]).includes(key)
@@ -24,9 +30,12 @@ export function getSettings(db: Db): AppSettings {
   const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[]
   const stored: Record<string, unknown> = {}
   for (const row of rows) {
-    stored[row.key] = parseStored(row.value)
-    if (isSecretKey(row.key) && typeof stored[row.key] === 'string' && stored[row.key]) {
-      stored[row.key] = openSecret(stored[row.key] as string)
+    const value = parseStored(row.value)
+    stored[row.key] = value
+    if (isSecretKey(row.key) && typeof value === 'string' && value) {
+      const secret = readSecret(value)
+      stored[row.key] = secret.value
+      stored[UNREADABLE_FLAG[row.key]] = !secret.readable
     }
   }
   return { ...DEFAULT_SETTINGS, ...(stored as Partial<AppSettings>) }

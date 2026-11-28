@@ -49,18 +49,35 @@ export function sealSecret(value: string): string {
   return `${PREFIX}${Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64')}`
 }
 
-/** Decrypt a stored secret; legacy plaintext values pass through unchanged. */
-export function openSecret(stored: string): string {
-  if (!stored || !isSealed(stored)) return stored
-  if (!keyFile) return ''
+export interface SecretRead {
+  value: string
+  /**
+   * False when a sealed value exists that this machine's key file cannot open:
+   * a profile restored or copied without secrets.key, or one whose key was
+   * replaced. The value then reads as empty, but callers can say the secret is
+   * unreadable here instead of showing it as not configured.
+   */
+  readable: boolean
+}
+
+/**
+ * Decrypt a stored secret and report whether it could be read. Legacy plaintext
+ * values pass through unchanged, and an empty row is simply empty.
+ */
+export function readSecret(stored: string): SecretRead {
+  if (!stored || !isSealed(stored)) return { value: stored, readable: true }
+  if (!keyFile) return { value: '', readable: false }
   try {
     const payload = Buffer.from(stored.slice(PREFIX.length), 'base64')
     const iv = payload.subarray(0, 12)
     const tag = payload.subarray(12, 28)
     const decipher = crypto.createDecipheriv('aes-256-gcm', keyBytes(), iv)
     decipher.setAuthTag(tag)
-    return Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString('utf8')
+    const value = Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString('utf8')
+    return { value, readable: true }
   } catch {
-    return ''
+    return { value: '', readable: false }
   }
 }
+
+

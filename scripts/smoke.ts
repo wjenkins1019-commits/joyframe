@@ -43,9 +43,10 @@ import {
 } from '../src/main/services/scanner.ts'
 import { seededPlatforms } from '../src/main/services/platforms.ts'
 import { getSettings, migrateSecrets, publicSettings, updateSettings } from '../src/main/services/settings.ts'
+import { applySettingsPatch } from '../src/main/services/settings-guard.ts'
 import { configureSecrets } from '../src/main/services/secrets.ts'
 import { detectSteam, importSteamGames, parseVdf } from '../src/main/services/steam.ts'
-import { createBackup, isValidDatabase, listBackups } from '../src/main/services/backup.ts'
+import { createBackup, isValidDatabase, listBackups, restoreBackup } from '../src/main/services/backup.ts'
 import { seedLegacyProfile } from './seed-legacy.ts'
 
 const root = path.join(process.cwd(), '.smoke')
@@ -65,6 +66,40 @@ async function check(name: string, fn: () => void | Promise<void>): Promise<void
     failures.push(`${name}: ${(error as Error).message}`)
     console.log(`  FAIL  ${name} — ${(error as Error).message}`)
   }
+}
+
+/**
+ * Collect everything written to the console or the process output streams,
+ * so a check can assert a secret never reached either. The capture replaces the
+ * writers, so nothing collected here is also printed.
+ */
+async function captureOutput(fn: () => Promise<void>): Promise<string> {
+  const chunks: string[] = []
+  const record = (chunk: unknown): void => {
+    if (typeof chunk === 'string') chunks.push(chunk)
+    else if (Buffer.isBuffer(chunk)) chunks.push(chunk.toString('utf8'))
+    else chunks.push(String(chunk))
+  }
+  const originals = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug }
+  const stdout = process.stdout.write.bind(process.stdout)
+  const stderr = process.stderr.write.bind(process.stderr)
+  const sink = (chunk: string | Uint8Array): boolean => {
+    record(chunk)
+    return true
+  }
+  console.log = console.info = console.warn = console.error = console.debug = (...args: unknown[]) => {
+    record(args.map((arg) => String(arg)).join(' '))
+  }
+  process.stdout.write = sink as typeof process.stdout.write
+  process.stderr.write = sink as typeof process.stderr.write
+  try {
+    await fn()
+  } finally {
+    Object.assign(console, originals)
+    process.stdout.write = stdout
+    process.stderr.write = stderr
+  }
+  return chunks.join('\n')
 }
 
 function write(file: string, contents: string | Buffer, size = 0): void {
@@ -1123,6 +1158,149 @@ await check('Provider secrets are encrypted at rest and hidden from public setti
   assert.equal(publicSettings(getSettings(db)).igdbSecretConfigured, false)
 })
 
+await check('A saved key this machine cannot decrypt is reported unreadable, not unset', () => {
+  const otherKey = path.join(root, 'other-secrets.key')
+  fs.rmSync(otherKey, { force: true })
+  try {
+    updateSettings(db, { rawgApiKey: 'smoke-sealed-key' })
+    assert.equal(getSettings(db).rawgKeyUnreadable, false, 'a readable key was reported unreadable')
+
+    // Same profile, a machine whose secrets.key cannot open the row: what a
+    // restore without secrets.key looks like.
+    configureSecrets(otherKey)
+    const foreign = getSettings(db)
+    assert.equal(foreign.rawgApiKey, '', 'an undecryptable key should read as empty')
+    assert.equal(foreign.rawgKeyUnreadable, true, 'an undecryptable key was reported as unset')
+    const view = publicSettings(foreign)
+    assert.equal(view.rawgKeyConfigured, false)
+    assert.equal(view.rawgKeyUnreadable, true)
+    assert.equal(view.igdbSecretUnreadable, false, 'an absent secret was reported unreadable')
+  } finally {
+    configureSecrets(path.join(root, 'secrets.key'))
+  }
+
+  assert.equal(getSettings(db).rawgKeyUnreadable, false, 'the flag survived the key returning')
+  assert.equal(getSettings(db).rawgApiKey, 'smoke-sealed-key')
+  updateSettings(db, { rawgApiKey: '' })
+  assert.equal(publicSettings(getSettings(db)).rawgKeyUnreadable, false)
+  fs.rmSync(otherKey, { force: true })
+})
+
+await check('A rejected RAWG key writes nothing', async () => {
+  updateSettings(db, { rawgApiKey: '', previewDelay: 2400 })
+  const key = 'smoke-rejected-rawg-key-8c41'
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  const previous = process.env.JOYFRAME_FAULT_METADATA
+  try {
+    // RAWG answers 401 without a network call, the same way a real refusal does.
+    process.env.JOYFRAME_FAULT_METADATA = '401'
+    const refused = await applySettingsPatch(db, deps, { rawgApiKey: `  ${key}  `, previewDelay: 1200 })
+    assert.equal(refused.ok, false, 'a rejected key was accepted')
+    if (!refused.ok) {
+      assert.equal(refused.problem, 'RAWG rejected this key — it is wrong, truncated or not a RAWG API key.')
+      assert.equal(refused.problem.includes(key), false, 'the rejection message included the key')
+    }
+    assert.equal(getSettings(db).rawgApiKey, '', 'a rejected key was stored')
+    assert.equal(publicSettings(getSettings(db)).rawgKeyConfigured, false)
+    assert.equal(getSettings(db).previewDelay, 2400, 'a refused key write applied the rest of the patch')
+
+    // Whitespace-only input is trimmed away before verification, so it clears
+    // the stored key instead of being sent to RAWG as a bad one — it succeeds
+    // even with every RAWG request refusing.
+    const cleared = await applySettingsPatch(db, deps, { rawgApiKey: '   ' })
+    assert.equal(cleared.ok, true, 'a whitespace-only key was sent to RAWG')
+    assert.equal(getSettings(db).rawgApiKey, '')
+  } finally {
+    if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
+    else process.env.JOYFRAME_FAULT_METADATA = previous
+  }
+})
+
+await check('A rejected RAWG key never reaches log output', async () => {
+  const key = 'smoke-logged-rawg-key-19af'
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  const previous = process.env.JOYFRAME_FAULT_METADATA
+  let problem = ''
+  let captured = ''
+  try {
+    process.env.JOYFRAME_FAULT_METADATA = '401'
+    captured = await captureOutput(async () => {
+      const refused = await applySettingsPatch(db, deps, { rawgApiKey: key })
+      if (!refused.ok) problem = refused.problem
+    })
+  } finally {
+    if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
+    else process.env.JOYFRAME_FAULT_METADATA = previous
+  }
+  assert.match(problem, /^RAWG rejected this key/, 'the rejection did not report a message')
+  assert.equal(captured.includes(key), false, `the rejected key appeared in captured output: ${captured.slice(0, 200)}`)
+  assert.equal(getSettings(db).rawgApiKey, '')
+})
+
+await check('A rejected IGDB credential pair writes nothing', async () => {
+  updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  const previous = process.env.JOYFRAME_FAULT_METADATA
+  try {
+    // Twitch refuses the grant without a network call, the way a bad client does.
+    process.env.JOYFRAME_FAULT_METADATA = '401'
+    const refused = await applySettingsPatch(db, deps, {
+      igdbClientId: 'smoke-igdb-id',
+      igdbClientSecret: 'smoke-igdb-secret'
+    })
+    assert.equal(refused.ok, false, 'a rejected IGDB pair was accepted')
+    if (!refused.ok) {
+      assert.equal(refused.problem, 'IGDB rejected these Twitch credentials — check the client ID and secret.')
+      assert.equal(refused.problem.includes('smoke-igdb-secret'), false, 'the rejection message included the secret')
+    }
+    assert.equal(getSettings(db).igdbClientId, '', 'a rejected client ID was stored')
+    assert.equal(getSettings(db).igdbClientSecret, '', 'a rejected client secret was stored')
+    assert.equal(publicSettings(getSettings(db)).igdbSecretConfigured, false)
+
+    // Half a pair cannot be checked, so an ID alone is stored as typed and the
+    // pair is checked once the secret arrives.
+    const partial = await applySettingsPatch(db, deps, { igdbClientId: 'smoke-igdb-id' })
+    assert.equal(partial.ok, true, 'an ID without a secret was refused')
+    assert.equal(getSettings(db).igdbClientId, 'smoke-igdb-id')
+  } finally {
+    if (previous === undefined) delete process.env.JOYFRAME_FAULT_METADATA
+    else process.env.JOYFRAME_FAULT_METADATA = previous
+    updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  }
+})
+
+await check('A confirmed IGDB pair is stored trimmed', async () => {
+  updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  const deps = { db, settings: getSettings(db), artworkDir: path.join(root, 'artwork'), cacheArtwork: false }
+  const realFetch = globalThis.fetch
+  const calls: string[] = []
+  try {
+    // Twitch issues a token for the pair, so the guard accepts it.
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input instanceof URL ? input.toString() : typeof input === 'string' ? input : input.url
+      calls.push(url)
+      return new Response(JSON.stringify({ access_token: 'smoke-token', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    }) as typeof globalThis.fetch
+    const saved = await applySettingsPatch(db, deps, {
+      igdbClientId: '  smoke-igdb-id  ',
+      igdbClientSecret: '  smoke-igdb-secret  '
+    })
+    assert.equal(saved.ok, true, saved.ok ? '' : saved.problem)
+    assert.equal(calls.length, 1, 'the pair was checked more than once')
+    assert.ok(calls[0].includes('id.twitch.tv/oauth2/token'))
+    assert.ok(calls[0].includes('client_id=smoke-igdb-id'))
+    assert.equal(getSettings(db).igdbClientId, 'smoke-igdb-id')
+    assert.equal(getSettings(db).igdbClientSecret, 'smoke-igdb-secret')
+    assert.equal(publicSettings(getSettings(db)).igdbSecretConfigured, true)
+  } finally {
+    globalThis.fetch = realFetch
+    updateSettings(db, { igdbClientId: '', igdbClientSecret: '' })
+  }
+})
+
 await check('Provider chain puts the preference first and keeps every configured fallback', () => {
   updateSettings(db, { metadataProvider: 'steam', rawgApiKey: '', igdbClientId: '', igdbClientSecret: '' })
   assert.deepEqual(providerChain(getSettings(db)), ['steam'])
@@ -1495,6 +1673,114 @@ await check('Database backups are valid SQLite files and restorable candidates',
   assert.ok(fs.existsSync(backup.path))
   assert.equal(isValidDatabase(backup.path), true)
   assert.equal(listBackups(backupDir).length, 1)
+})
+
+await check('A manual backup can carry the profile key, and restore installs it', async () => {
+  const dir = path.join(root, 'portable')
+  const profileDb = path.join(dir, 'joyframe.db')
+  const profileKey = path.join(dir, 'secrets.key')
+  const backupDir = path.join(dir, 'backups')
+  fs.mkdirSync(dir, { recursive: true })
+  configureSecrets(profileKey)
+  try {
+    const portable = openDatabase(profileDb)
+    updateSettings(portable, { rawgApiKey: 'portable-key' })
+
+    const withKeys = await createBackup(portable, backupDir, 5, 'keys', { secretsPath: profileKey })
+    assert.equal(withKeys.includesSecrets, true, 'an opt-in backup did not carry the key')
+    assert.deepEqual(fs.readFileSync(`${withKeys.path}.key`), fs.readFileSync(profileKey))
+    if (process.platform !== 'win32') {
+      assert.equal(
+        fs.statSync(`${withKeys.path}.key`).mode & 0o777,
+        0o600,
+        'the backup key file was not owner-only'
+      )
+    }
+
+    const plain = await createBackup(portable, backupDir, 5, 'plain')
+    assert.equal(plain.includesSecrets, false, 'a default backup carried the key')
+    assert.equal(fs.existsSync(`${plain.path}.key`), false)
+    assert.equal(listBackups(backupDir).filter((entry) => entry.includesSecrets).length, 1)
+
+    // Another key cannot open the stored credential, as after a move to a new PC.
+    fs.writeFileSync(profileKey, Buffer.alloc(32, 7))
+    configureSecrets(profileKey)
+    assert.equal(publicSettings(getSettings(portable)).rawgKeyUnreadable, true)
+
+    // Restoring the portable backup installs its key, so the credential reads again.
+    restoreBackup(portable, profileDb, withKeys.path, profileKey)
+    configureSecrets(profileKey)
+    const restored = openDatabase(profileDb)
+    assert.equal(getSettings(restored).rawgApiKey, 'portable-key')
+    assert.equal(publicSettings(getSettings(restored)).rawgKeyUnreadable, false)
+
+    if (process.platform !== 'win32') {
+      const safetyDir = path.join(dir, 'backups')
+      const safetyKey = fs
+        .readdirSync(safetyDir)
+        .find((file) => file.startsWith('joyframe-before-restore-') && file.endsWith('.db.key'))
+      assert.ok(safetyKey, 'the pre-restore safety copy did not carry its key')
+      assert.equal(fs.statSync(path.join(safetyDir, safetyKey)).mode & 0o777, 0o600, 'the safety key was not owner-only')
+      assert.equal(fs.statSync(profileKey).mode & 0o777, 0o600, 'the restored key file was not owner-only')
+    }
+
+    // A backup without a key leaves the live key exactly as it was.
+    const liveKey = fs.readFileSync(profileKey)
+    restoreBackup(restored, profileDb, plain.path, profileKey)
+    assert.deepEqual(fs.readFileSync(profileKey), liveKey, 'a keyless restore replaced the profile key')
+  } finally {
+    configureSecrets(path.join(root, 'secrets.key'))
+  }
+})
+
+await check('A restore whose database copy fails rolls back the key and the database', async () => {
+  const dir = path.join(root, 'restore-failure')
+  const profileDb = path.join(dir, 'joyframe.db')
+  const profileKey = path.join(dir, 'secrets.key')
+  const backupDir = path.join(dir, 'backups')
+  fs.mkdirSync(dir, { recursive: true })
+  configureSecrets(profileKey)
+  try {
+    const live = openDatabase(profileDb)
+    updateSettings(live, { rawgApiKey: 'survives-failure', previewDelay: 900 })
+    const portable = await createBackup(live, backupDir, 5, 'keys', { secretsPath: profileKey })
+    // Change the live database after the backup so the two can be told apart.
+    updateSettings(live, { previewDelay: 1234 })
+
+    // The live key no longer opens the stored row, so a rollback must keep this
+    // exact key rather than installing the backup's.
+    const rotated = Buffer.alloc(32, 9)
+    fs.writeFileSync(profileKey, rotated)
+    configureSecrets(profileKey)
+
+    // A read-only live database makes the copy fail after the swap has begun.
+    fs.chmodSync(profileDb, 0o444)
+    let failed = false
+    try {
+      restoreBackup(live, profileDb, portable.path, profileKey)
+    } catch {
+      failed = true
+    } finally {
+      fs.chmodSync(profileDb, 0o644)
+    }
+    assert.equal(live.isOpen, false, 'a failed restore left the connection open')
+    if (!failed) {
+      // A platform that still allows the copy (for example running as root)
+      // cannot show this rollback; the success path is covered above.
+      return
+    }
+    assert.deepEqual(fs.readFileSync(profileKey), rotated, 'a failed restore replaced the live key')
+    assert.equal(fs.existsSync(`${profileKey}.pending`), false, 'a failed restore left a staged key behind')
+
+    // The pre-restore database is back in place: the value written after the
+    // backup is still there, not the backup's older one.
+    configureSecrets(profileKey)
+    const reopened = openDatabase(profileDb)
+    assert.equal(getSettings(reopened).previewDelay, 1234, 'a failed restore left the backup database in place')
+    reopened.close()
+  } finally {
+    configureSecrets(path.join(root, 'secrets.key'))
+  }
 })
 
 await check('Settings and game data survive a database reopen', () => {

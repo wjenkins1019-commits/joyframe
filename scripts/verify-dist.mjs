@@ -26,6 +26,7 @@
  * build is missing or any reading fails.
  */
 import { spawn, spawnSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -112,6 +113,18 @@ const PROFILE_CHECKS = {
     'restore restarts the app on the restored library',
     'the restored snapshot brings back one entry per disc',
     'restore keeps a copy of the replaced library'
+  ],
+  'keys restore': [
+    'the seeded provider key reads before any backup',
+    'a backup with the key toggle writes a key companion',
+    'the app restarts on the rotated profile',
+    'rotating secrets.key makes the stored provider key unreadable',
+    'restoring the KEYS backup restarts the app',
+    'the restored KEYS backup brings the stored key back readable',
+    'the backup key companion becomes the profile key',
+    'a plain backup has no key companion',
+    'restoring a plain backup restarts the app',
+    'a plain backup restores the library without installing a key'
   ]
 }
 
@@ -713,8 +726,11 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, expe
   const roms = path.join(dir, 'roms')
   const disc = (index) => path.join(dir, RECOVERY_DISCS[index])
   const backupDir = path.join(dir, 'backups')
+  // Only database files: a snapshot may also carry a `.db.key` companion.
   const snapshots = (prefix) =>
-    fs.existsSync(backupDir) ? fs.readdirSync(backupDir).filter((file) => file.startsWith(prefix)) : []
+    fs.existsSync(backupDir)
+      ? fs.readdirSync(backupDir).filter((file) => file.startsWith(prefix) && file.endsWith('.db'))
+      : []
   const listGames = `window.joyframe.library.list({ search: ${JSON.stringify(RECOVERY_TITLE)} }).then((games) =>
     games.map((game) => ({ title: game.title, playtimeSeconds: game.playtimeSeconds, notes: game.notes }))
   )`
@@ -1042,6 +1058,145 @@ async function checkMultidiscRecovery({ label, app, attach, evaluate, read, expe
   }
 }
 
+/**
+ * The provider-key round trip, through the packaged app's own backup toggle and
+ * restore path. A KEYS backup is the only thing that can revive a stored key
+ * after secrets.key changes, so the backup is made while the key still opens the
+ * sealed row, then the profile's key is rotated before the restore.
+ *
+ * The plain half proves the opposite promise: restoring such a backup brings the
+ * library back and must leave the live key exactly as it was.
+ */
+async function checkKeysRestore({ label, app, boot, attachNew, evaluate, expectClose, check, profile }) {
+  const dir = path.resolve(profile)
+  const keyFile = path.join(dir, 'secrets.key')
+  const backupDir = path.join(dir, 'backups')
+  const state = (session) =>
+    session.evaluate(`window.joyframe.settings.get().then((settings) => ({
+      configured: settings.rawgKeyConfigured,
+      unreadable: settings.rawgKeyUnreadable
+    }))`)
+  const makeBackup = (session, includeSecrets) =>
+    session.evaluate(
+      `window.joyframe.system.backup({ includeSecrets: ${includeSecrets} }).then((info) => ({
+        name: info.name,
+        includesSecrets: info.includesSecrets
+      }))`
+    )
+
+  /** A relaunched instance is not our child, so it is asked to quit itself. */
+  const quitSession = async (session) => {
+    session.expectClose()
+    await Promise.race([session.evaluate('window.joyframe.system.quit()').catch(() => null), delay(4000)])
+  }
+
+  /** Restore, then attach to the window the relaunched app opens. */
+  const restore = async (session, target) => {
+    const previous = session.target.id
+    session.expectClose()
+    await Promise.race([
+      session.evaluate(`window.joyframe.system.restore(${JSON.stringify(target)}).catch((error) => String(error))`).catch(() => null),
+      delay(10000)
+    ])
+    return attachNew(previous)
+  }
+
+  const seeded = await state({ evaluate })
+  check(
+    `${label}: the seeded provider key reads before any backup`,
+    seeded?.configured === true && seeded?.unreadable === false,
+    JSON.stringify(seeded)
+  )
+
+  const portable = await makeBackup({ evaluate }, true)
+  const portablePath = portable ? path.join(backupDir, portable.name) : null
+  check(
+    `${label}: a backup with the key toggle writes a key companion`,
+    Boolean(portable?.includesSecrets) && Boolean(portablePath) && fs.existsSync(`${portablePath}.key`),
+    JSON.stringify(portable)
+  )
+  if (!portablePath || !fs.existsSync(`${portablePath}.key`)) return
+
+  // Quit before touching secrets.key: the running app reads the key once at boot.
+  const exited = new Promise((resolve) => app.once('exit', resolve))
+  expectClose()
+  evaluate('window.joyframe.system.quit()').catch(() => null)
+  const stopped = await Promise.race([exited.then(() => true), delay(15000).then(() => false)])
+  if (!stopped) {
+    check(`${label}: the app restarts on the rotated profile`, false, 'the app did not exit')
+    return
+  }
+  fs.writeFileSync(keyFile, crypto.randomBytes(32))
+  const rotatedBoot = await boot({ announce: false })
+  check(
+    `${label}: the app restarts on the rotated profile`,
+    Boolean(rotatedBoot),
+    rotatedBoot ? 'window attached' : 'no window'
+  )
+  if (!rotatedBoot) return
+
+  const rotatedState = await state(rotatedBoot)
+  check(
+    `${label}: rotating secrets.key makes the stored provider key unreadable`,
+    rotatedState?.configured === false && rotatedState?.unreadable === true,
+    JSON.stringify(rotatedState)
+  )
+
+  const restored = await restore(rotatedBoot, portablePath)
+  check(
+    `${label}: restoring the KEYS backup restarts the app`,
+    Boolean(restored),
+    restored ? 'new window attached' : 'no window after the restart'
+  )
+  if (!restored) return
+
+  const readable = await state(restored)
+  check(
+    `${label}: the restored KEYS backup brings the stored key back readable`,
+    readable?.configured === true && readable?.unreadable === false,
+    JSON.stringify(readable)
+  )
+  const installedKey = fs.readFileSync(keyFile).equals(fs.readFileSync(`${portablePath}.key`))
+  check(
+    `${label}: the backup key companion becomes the profile key`,
+    installedKey,
+    `live key ${installedKey ? 'matches' : 'differs from'} the backup companion`
+  )
+
+  const plain = await makeBackup(restored, false)
+  const plainPath = plain ? path.join(backupDir, plain.name) : null
+  check(
+    `${label}: a plain backup has no key companion`,
+    plain?.includesSecrets === false && Boolean(plainPath) && !fs.existsSync(`${plainPath}.key`),
+    JSON.stringify(plain)
+  )
+  if (!plainPath) {
+    await quitSession(restored)
+    return
+  }
+
+  // Rotate without restarting first: the restore relaunches the app, and that
+  // boot is what has to find the stored key unreadable.
+  const rotatedAgain = crypto.randomBytes(32)
+  fs.writeFileSync(keyFile, rotatedAgain)
+  const afterPlain = await restore(restored, plainPath)
+  check(
+    `${label}: restoring a plain backup restarts the app`,
+    Boolean(afterPlain),
+    afterPlain ? 'new window attached' : 'no window after the restart'
+  )
+  if (!afterPlain) return
+
+  const plainState = await state(afterPlain)
+  const keyKept = fs.readFileSync(keyFile).equals(rotatedAgain)
+  check(
+    `${label}: a plain backup restores the library without installing a key`,
+    plainState?.configured === false && plainState?.unreadable === true && keyKept,
+    `${JSON.stringify(plainState)} liveKeyUnchanged=${keyKept}`
+  )
+  await quitSession(afterPlain)
+}
+
 async function main() {
   await preflight({
     label: 'verify:dist',
@@ -1079,6 +1234,21 @@ async function main() {
       return { target, session }
     }
 
+    /** Attach to a window this profile opens later, never the one already attached. */
+    const attachNew = async (previousId) => {
+      const deadline = Date.now() + 60000
+      while (Date.now() < deadline) {
+        const target = await findWindow(PORT)
+        if (target && target.id !== previousId) {
+          const session = await createSession(target)
+          sessions.push(session)
+          return { ...session, target }
+        }
+        await delay(300)
+      }
+      return null
+    }
+
     /**
      * Launch the app on this profile and attach to it. A check that restores a
      * backup attaches to the instance the app relaunches instead, since that one
@@ -1097,7 +1267,7 @@ async function main() {
           attached?.target.url ?? 'no window'
         )
       }
-      return attached ? { app, ...attached.session } : null
+      return attached ? { app, ...attached.session, target: attached.target } : null
     }
 
     try {
@@ -1109,7 +1279,9 @@ async function main() {
       await checks({
         label,
         app: first.app,
+        boot,
         attach,
+        attachNew,
         expectClose: first.expectClose,
         evaluate: first.evaluate,
         read: first.read,
@@ -1161,6 +1333,12 @@ async function main() {
       profile: path.join(ROOT, 'multidisc-recovery'),
       seed: ['scripts/seed-multidisc.ts', '--legacy'],
       checks: checkMultidiscRecovery
+    })
+    await verifyProfile({
+      label: 'keys restore',
+      profile: path.join(ROOT, 'keys-restore'),
+      seed: ['scripts/seed-keys-restore.ts'],
+      checks: checkKeysRestore
     })
   } finally {
     removeDir(ROOT)
